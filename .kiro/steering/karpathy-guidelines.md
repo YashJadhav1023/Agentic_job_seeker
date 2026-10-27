@@ -31,4 +31,4 @@ These bias toward caution over speed. For trivial tasks, use judgment.
 ## Project rules that follow from this
 - `main` deploys automatically to the live AWS server. Work on a feature branch and merge only when `pytest` (backend) and `flutter analyze` + `flutter test` (mobile) pass.
 - Never put keys in code or in the brain notes. Secrets live in AWS Parameter Store under `/agentic-job-seeker/secret/` and reach the container as environment variables.
-- Do not raise sending/applying volume or bypass a site's bot protection, captcha or rate limit; the cooldown logic in `hub/autopilot.py` is deliberate.
+- Daily volume caps are the owner's decision (profile `limits` / `hr_outreach`). Never bypass a site's bot protection, captcha or rate limit; the cooldown logic in `hub/autopilot.py` is deliberate.

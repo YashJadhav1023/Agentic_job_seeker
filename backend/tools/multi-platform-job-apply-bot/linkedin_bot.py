@@ -71,6 +71,9 @@ def get_driver():
         # job-hub patch: run fully in the background (no window), normal desktop UA so LinkedIn serves the real UI
         options.add_argument("--headless=new")
         options.add_argument("--window-size=1366,900")
+        # job-hub patch: Chrome exits at start-up inside the non-root Docker container without these
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
         major = "156"
         try:
             out = subprocess.run([os.getenv("JOBHUB_CHROME", ""), "--version"], capture_output=True, text=True,

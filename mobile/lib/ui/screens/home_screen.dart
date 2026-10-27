@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../state/providers.dart';
 import '../widgets/common.dart';
+import 'runs_screen.dart' show runIsFailed, runIsRunning;
 import 'tool_run_screen.dart';
 
 /// Dashboard: readiness, today's counters vs caps, kill switch, and one-tap shortcuts.
@@ -28,7 +31,10 @@ class HomeScreen extends ConsumerWidget {
           child: ListView(padding: const EdgeInsets.all(16), children: [
             _Header(s),
             const SizedBox(height: 12),
+            _SetupChecklist(s),
             _Today(s),
+            const SizedBox(height: 12),
+            const _Activity(),
             const SizedBox(height: 12),
             _Sessions(s),
             const SizedBox(height: 12),
@@ -77,6 +83,114 @@ class _Header extends StatelessWidget {
           ],
         ]),
       ),
+    );
+  }
+}
+
+/// Setup progress: everything the app needs before it can work unattended. Hidden once complete.
+class _SetupChecklist extends StatelessWidget {
+  const _SetupChecklist(this.s);
+  final Map<String, dynamic> s;
+
+  @override
+  Widget build(BuildContext context) {
+    final sessions = ((s['login_sessions_saved'] as Map?) ?? const {}).cast<String, dynamic>();
+    final creds = ((s['credentials'] as Map?) ?? const {}).cast<String, dynamic>();
+    final steps = <(String, bool, String)>[
+      ('Profile complete', ((s['missing_profile_fields'] as List?) ?? const []).isEmpty, '/settings'),
+      ('Gmail app password', creds['gmail_app_password'] == true, '/settings'),
+      ('Naukri login', sessions['naukri'] == true, '/tools/login_platform'),
+      ('LinkedIn login', sessions['linkedin'] == true, '/tools/login_platform'),
+      ('Live actions confirmed', s['real_actions_allowed'] == true, '/settings'),
+    ];
+    final done = steps.where((e) => e.$2).length;
+    if (done == steps.length) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Setup $done of ${steps.length}', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            LinearProgressIndicator(value: done / steps.length),
+            const SizedBox(height: 8),
+            for (final (label, ok, route) in steps)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(ok ? Icons.check_circle : Icons.radio_button_unchecked,
+                    color: ok ? Colors.green : Theme.of(context).colorScheme.outline),
+                title: Text(label),
+                trailing: ok ? null : const Icon(Icons.chevron_right),
+                onTap: ok
+                    ? null
+                    : () => route == '/tools/login_platform'
+                        ? context.push(route, extra: {'platform': label.split(' ').first.toLowerCase()})
+                        : context.go(route),
+              ),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+/// Live view of the latest background runs; refreshes by itself while anything is running.
+class _Activity extends ConsumerStatefulWidget {
+  const _Activity();
+
+  @override
+  ConsumerState<_Activity> createState() => _ActivityState();
+}
+
+class _ActivityState extends ConsumerState<_Activity> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 5), (_) {
+      final list = ref.read(runsProvider).value;
+      if (mounted && list != null && list.any(runIsRunning)) ref.invalidate(runsProvider);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final runs = ref.watch(runsProvider).value ?? const <Map<String, dynamic>>[];
+    final recent = runs.take(4).toList();
+    return Card(
+      child: Column(children: [
+        ListTile(
+          dense: true,
+          title: const Text('Recent activity'),
+          trailing: TextButton(onPressed: () => context.go('/runs'), child: const Text('All logs')),
+        ),
+        if (recent.isEmpty)
+          const Padding(padding: EdgeInsets.fromLTRB(16, 0, 16, 16), child: Align(alignment: Alignment.centerLeft, child: Text('No runs yet.'))),
+        for (final r in recent)
+          ListTile(
+            dense: true,
+            leading: runIsRunning(r)
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                : Icon(runIsFailed(r) ? Icons.error_outline : Icons.check_circle_outline,
+                    color: runIsFailed(r) ? Theme.of(context).colorScheme.error : Colors.green),
+            title: Text('${r['kind']}${r['dry_run'] == true ? ' (dry run)' : ''}'),
+            subtitle: Text(
+              (((r['log_tail'] as List?) ?? const []).isEmpty) ? '${r['started']}' : '${(r['log_tail'] as List).last}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            onTap: () => context.push('/runs/${Uri.encodeComponent('${r['run_id']}')}'),
+          ),
+      ]),
     );
   }
 }

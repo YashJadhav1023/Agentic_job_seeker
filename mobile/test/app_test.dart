@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:agentic_job_seeker/api/client.dart';
 import 'package:agentic_job_seeker/models/tool_spec.dart';
+import 'package:agentic_job_seeker/ui/widgets/log_view.dart';
 import 'package:agentic_job_seeker/ui/widgets/schema_form.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -56,6 +57,14 @@ void main() {
     expect(t.required, ['to']);
     expect(t.destructive, isTrue);
     expect(t.category, 'Outreach');
+  });
+
+  test('classifyLogLine colours by severity', () {
+    expect(classifyLogLine('Traceback (most recent call last):'), LogLevel.error);
+    expect(classifyLogLine('apply failed: timeout'), LogLevel.error);
+    expect(classifyLogLine('captcha detected, platform on cooldown'), LogLevel.warning);
+    expect(classifyLogLine('applied to 3 jobs'), LogLevel.success);
+    expect(classifyLogLine('searching naukri'), LogLevel.info);
   });
 
   testWidgets('SchemaForm builds typed args and validates required fields', (tester) async {

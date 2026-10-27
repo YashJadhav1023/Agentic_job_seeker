@@ -315,12 +315,12 @@ class _QuickActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final actions = <(IconData, String, String, Map<String, dynamic>)>[
-      (Icons.smart_toy, 'Autopilot (dry run)', 'autopilot_run', {'dry_run': true}),
+      (Icons.smart_toy, 'Run autopilot', 'autopilot_run', {}),
       (Icons.travel_explore, 'Search all boards', 'multi_board_search', {'save': true}),
       (Icons.search, 'LinkedIn search', 'search_jobs', {}),
-      (Icons.assignment_turned_in, 'Easy apply', 'apply_jobs', {'dry_run': true}),
+      (Icons.assignment_turned_in, 'Easy apply', 'apply_jobs', {}),
       (Icons.contact_mail, 'Find HR emails', 'find_hr_emails', {}),
-      (Icons.forward_to_inbox, 'Email HR (preview)', 'send_hr_emails', {'dry_run': true}),
+      (Icons.forward_to_inbox, 'Email HR', 'send_hr_emails', {}),
       (Icons.dynamic_feed, 'Scan hiring posts', 'scan_hiring_posts', {}),
       (Icons.insights, 'Tracker report', 'tracker_report', {}),
     ];

@@ -58,7 +58,7 @@ Without your own domain the server URL is `https://<elastic-ip-with-dashes>.ssli
 **Cost — read this.** AWS has no "free forever" option for an always-on server. Accounts created after
 15 July 2025 get a Free plan with up to $200 of credits for 6 months; the eligible instance types
 (`t3.micro`, `t3.small`, `t4g.*`, `c7i-flex.large`, `m7i-flex.large`) are only free while those credits last.
-On a **Paid** plan with no credits you pay on-demand prices. ap-south-1 list prices (AWS Pricing API): `t4g.small` $0.0112/h ≈ $8.2/month, `t3.small` $0.0224/h ≈ $16.4/month, plus public IPv4 $0.005/h ≈ $3.6/month and 30 GB gp3 ≈ $2.5/month, so the default is roughly **$14–15/month** (check the [AWS Pricing Calculator](https://calculator.aws/) for your case). The budget alarm emails you as soon as a charge is forecast. Delete everything with `aws cloudformation delete-stack --stack-name agentic-job-seeker`.
+On a **Paid** plan with no credits you pay on-demand prices. ap-south-1 list prices (AWS Pricing API): `t4g.small` $0.0112/h ≈ $8.2/month, `t3.small` $0.0224/h ≈ $16.4/month, plus public IPv4 $0.005/h ≈ $3.6/month and 30 GB gp3 ≈ $2.5/month, so the default is roughly **$14–15/month** (check the [AWS Pricing Calculator](https://calculator.aws/) for your case). The budget alarm emails you when a charge is forecast. Remove everything with the Terraform repo workflow's `destroy` action.
 
 Any other Linux VM works the same way: install Docker, clone, `cd deploy && ./setup.sh <domain> && docker compose up -d --build`.
 

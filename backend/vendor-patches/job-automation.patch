@@ -1,0 +1,256 @@
+diff --git a/platforms/indeed.py b/platforms/indeed.py
+index 37d5723..055b463 100644
+--- a/platforms/indeed.py
++++ b/platforms/indeed.py
+@@ -5,6 +5,7 @@ import yaml
+ from playwright.async_api import async_playwright, TimeoutError as PWTimeout
+ from utils.logger import already_applied, log_applied
+ from utils.browser import get_browser_options
++from utils.hubguard import title_ok, DRY_RUN, PROFILE_DIR, wait_for_login, single_page, fill_all
+ 
+ with open("config.yaml") as f:
+     cfg = yaml.safe_load(f)
+@@ -30,60 +31,26 @@ async def handle_indeed_form(page):
+             await file_input.set_input_files(RESUME)
+             await page.wait_for_timeout(1500)
+ 
+-        # Text fields
+-        inputs = await page.query_selector_all("input[type='text'], input[type='number'], input[type='tel']")
+-        for inp in inputs:
+-            try:
+-                label_text = ""
+-                label_id = await inp.get_attribute("id")
+-                if label_id:
+-                    label_el = await page.query_selector(f"label[for='{label_id}']")
+-                    if label_el:
+-                        label_text = (await label_el.inner_text()).lower()
+-
+-                val = await inp.input_value()
+-                if val:
+-                    continue
+-
+-                if "phone" in label_text or "mobile" in label_text:
+-                    await inp.fill(APPLICANT["phone"])
+-                elif "city" in label_text or "location" in label_text:
+-                    await inp.fill("Pune, Maharashtra")
+-                elif "salary" in label_text or "ctc" in label_text:
+-                    await inp.fill("500000")
+-                elif "experience" in label_text or "year" in label_text:
+-                    await inp.fill("0")
+-                elif "name" in label_text:
+-                    await inp.fill(APPLICANT["name"])
+-            except:
+-                pass
+-
+-        # Textareas (cover letter)
+-        textareas = await page.query_selector_all("textarea")
+-        for ta in textareas:
+-            val = await ta.input_value()
+-            if not val:
+-                await ta.fill(COVER)
+-                break
+-
+-        # Dropdowns — pick first non-empty or "Yes" option
+-        selects = await page.query_selector_all("select")
+-        for sel in selects:
+-            try:
+-                options = await sel.query_selector_all("option")
+-                texts = [await o.inner_text() for o in options]
+-                for opt in texts:
+-                    if opt.strip().lower() in ["yes", "immediately", "0", "india", "bachelor"]:
+-                        await sel.select_option(label=opt.strip())
+-                        break
+-            except:
+-                pass
++        # Text fields, cover letter and dropdowns — all filled in one shot
++        await fill_all(page, [
++            (["phone", "mobile"], APPLICANT["phone"]),
++            (["city", "location"], "Pune, Maharashtra"),
++            (["salary", "ctc"], "500000"),
++            (["experience", "year"], "0"),
++            (["name"], APPLICANT["name"]),
++        ], cover=COVER)
+ 
+     except Exception as e:
+         print(f"  ⚠️ Form error: {e}")
+ 
+ 
+ async def apply_to_job(page, job_id, title, company, location):
++    if not title_ok(title):
++        print(f"  ⏭️  Skip (title filter): {title}")
++        return False
++    if DRY_RUN:
++        print(f"  🧪 DRY-RUN would apply: {title} @ {company} [{location}] {PLATFORM}")
++        return False
+     job_url = f"https://in.indeed.com/viewjob?jk={job_id}"
+ 
+     if already_applied(job_url):
+@@ -157,12 +124,10 @@ async def apply_to_job(page, job_id, title, company, location):
+ async def run(email=None):
+     count = 0
+     async with async_playwright() as p:
+-        browser = await p.chromium.launch(**get_browser_options())
+-        context = await browser.new_context(
++        context = await p.chromium.launch_persistent_context(PROFILE_DIR('indeed'), **get_browser_options(),
+             viewport={"width": 1280, "height": 800},
+-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+         )
+-        page = await context.new_page()
++        page = await single_page(context)
+ 
+         # Indeed India — no login required for Easy Apply on many jobs
+         # But pre-fill email if available
+@@ -232,6 +197,6 @@ async def run(email=None):
+                     print(f"  ⚠️ Search error: {e}")
+                     continue
+ 
+-        await browser.close()
++        await context.close()
+     print(f"\n✅ Indeed done — {count} applications")
+     return count
+diff --git a/platforms/naukri.py b/platforms/naukri.py
+index ffc5f2d..3352d6f 100644
+--- a/platforms/naukri.py
++++ b/platforms/naukri.py
+@@ -5,6 +5,7 @@ import yaml
+ from playwright.async_api import async_playwright, TimeoutError as PWTimeout
+ from utils.logger import already_applied, log_applied
+ from utils.browser import get_browser_options
++from utils.hubguard import title_ok, DRY_RUN, PROFILE_DIR, wait_for_login, single_page, fill_all
+ 
+ with open("config.yaml") as f:
+     cfg = yaml.safe_load(f)
+@@ -33,6 +34,12 @@ async def login(page, email, password):
+ 
+ 
+ async def apply_to_job(page, url, title, company, location):
++    if not title_ok(title):
++        print(f"  ⏭️  Skip (title filter): {title}")
++        return False
++    if DRY_RUN:
++        print(f"  🧪 DRY-RUN would apply: {title} @ {company} [{location}] {PLATFORM}")
++        return False
+     if already_applied(url):
+         print(f"  ⏭️  Skip (already applied): {title}")
+         return False
+@@ -54,26 +61,14 @@ async def apply_to_job(page, url, title, company, location):
+         await page.wait_for_timeout(3000)
+ 
+         # Handle any modal / popup that appears
+-        # Some jobs show a "Chatbot" apply form — handle text inputs
+-        inputs = await page.query_selector_all("input[type='text'], input[type='number'], textarea")
+-        for inp in inputs:
+-            try:
+-                placeholder = (await inp.get_attribute("placeholder") or "").lower()
+-                val = await inp.input_value()
+-                if val:
+-                    continue
+-                if "phone" in placeholder or "mobile" in placeholder:
+-                    await inp.fill(APPLICANT["phone"])
+-                elif "salary" in placeholder or "ctc" in placeholder:
+-                    await inp.fill(APPLICANT["expected_ctc"])
+-                elif "notice" in placeholder:
+-                    await inp.fill(APPLICANT["notice_period"])
+-                elif "experience" in placeholder or "year" in placeholder:
+-                    await inp.fill(APPLICANT["experience_years"])
+-                elif "name" in placeholder:
+-                    await inp.fill(APPLICANT["name"])
+-            except:
+-                pass
++        # Some jobs show a "Chatbot" apply form — fill every field in one shot
++        await fill_all(page, [
++            (["phone", "mobile"], APPLICANT["phone"]),
++            (["salary", "ctc"], APPLICANT["expected_ctc"]),
++            (["notice"], APPLICANT["notice_period"]),
++            (["experience", "year"], APPLICANT["experience_years"]),
++            (["name"], APPLICANT["name"]),
++        ])
+ 
+         # Submit / confirm
+         submit = (
+@@ -101,11 +96,10 @@ async def apply_to_job(page, url, title, company, location):
+ async def run(email, password):
+     count = 0
+     async with async_playwright() as p:
+-        browser = await p.chromium.launch(**get_browser_options())
+-        context = await browser.new_context(viewport={"width": 1280, "height": 800})
+-        page = await context.new_page()
++        context = await p.chromium.launch_persistent_context(PROFILE_DIR('naukri'), **get_browser_options(), viewport={"width": 1280, "height": 800})
++        page = await single_page(context)
+ 
+-        await login(page, email, password)
++        await wait_for_login(page, 'https://www.naukri.com/mnjuser/homepage', lambda u: 'mnjuser' in u and 'login' not in u)
+ 
+         for keyword in cfg["keywords"]:
+             if count >= LIMITS["max_per_platform"]:
+@@ -119,9 +113,10 @@ async def run(email, password):
+                 loc = location.lower()
+                 # Naukri URL: /react-developer-jobs-in-pune  or  /react-developer-jobs
+                 if loc == "remote":
+-                    search_url = f"https://www.naukri.com/{kw}-jobs?jobAge=7&experience=0"
++                    search_url = f"https://www.naukri.com/{kw}-jobs?jobAge=7&experience=1"
+                 else:
+-                    search_url = f"https://www.naukri.com/{kw}-jobs-in-{loc}?jobAge=7&experience=0"
++                    search_url = f"https://www.naukri.com/{kw}-jobs-in-{loc}?jobAge=7&experience=1"
++
+ 
+                 print(f"\n🔍 Naukri: '{keyword}' in {location}")
+                 try:
+@@ -165,6 +160,6 @@ async def run(email, password):
+                     print(f"  ⚠️ Search error: {e}")
+                     continue
+ 
+-        await browser.close()
++        await context.close()
+     print(f"\n✅ Naukri done — {count} applications")
+     return count
+diff --git a/utils/browser.py b/utils/browser.py
+index 18b663d..f18d115 100644
+--- a/utils/browser.py
++++ b/utils/browser.py
+@@ -1,18 +1,26 @@
+-import os
+-
+-def is_ci() -> bool:
+-    return os.getenv("CI") == "true" or os.getenv("GITHUB_ACTIONS") == "true"
+-
+-def get_browser_options() -> dict:
+-    if is_ci():
+-        return {
+-            "headless": True,
+-            "args": [
+-                "--no-sandbox",
+-                "--disable-setuid-sandbox",
+-                "--disable-dev-shm-usage",
+-                "--disable-gpu"
+-            ]
+-        }
+-    else:
+-        return {"headless": False}
+\ No newline at end of file
++import os, re, subprocess
++
++def is_ci() -> bool:
++    return os.getenv("CI") == "true" or os.getenv("GITHUB_ACTIONS") == "true"
++
++def _chrome_major() -> str:
++    exe = os.getenv("JOBHUB_CHROME", "")
++    try:
++        out = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=10).stdout
++        return re.search(r"(\d+)\.", out).group(1)
++    except Exception:
++        return "156"
++
++def get_browser_options() -> dict:
++    # job-hub patch: bundled Chromium (PLAYWRIGHT_BROWSERS_PATH); JOBHUB_HEADLESS=1 runs fully in the background.
++    headless = os.getenv("JOBHUB_HEADLESS", "1") == "1"
++    opts = {"headless": headless, "args": ["--disable-blink-features=AutomationControlled"]}
++    if headless:
++        # Full Chromium in new-headless mode (not the stripped headless shell) with a normal desktop UA,
++        # so sites serve the same pages as a visible browser.
++        opts["channel"] = "chromium"
++        opts["user_agent"] = (f"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
++                              f"Chrome/{_chrome_major()}.0.0.0 Safari/537.36")
++    if is_ci():
++        opts["args"] += ["--no-sandbox", "--disable-dev-shm-usage"]
++    return opts

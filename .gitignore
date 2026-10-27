@@ -1,0 +1,33 @@
+# --- secrets & personal data: never commit
+.env
+deploy/.env
+**/.secrets/
+**/.profiles/
+backend/data/
+backend/runs/
+backend/profile.yaml
+*.keystore
+*.jks
+key.properties
+**/ajs-credentials.txt
+
+# --- python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+backend/.browsers/
+backend/.tools/node_modules/
+
+# --- vendored bot output
+backend/tools/multi-platform-job-apply-bot/config.py
+backend/tools/multi-platform-job-apply-bot/applied_jobs_*.txt
+backend/tools/multi-platform-job-apply-bot/applications_*.log
+backend/tools/job-automation/config.yaml
+backend/tools/job-automation/applied_jobs.db
+*.log
+
+# --- editors / OS
+.idea/
+.vscode/
+.DS_Store

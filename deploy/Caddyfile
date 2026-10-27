@@ -1,0 +1,36 @@
+{$JOBHUB_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	# Remote browser (noVNC) for logging in to job sites. Extra basic-auth layer on top of the VNC password.
+	handle_path /browser/* {
+		basic_auth {
+			{$JOBHUB_BROWSER_USER} {$JOBHUB_BROWSER_HASH}
+		}
+		reverse_proxy jobhub:6080
+	}
+
+	# API + MCP (bearer-token auth enforced by the app). Long timeouts for slow tools like search_jobs.
+	handle {
+		request_body {
+			max_size 8MB
+		}
+		reverse_proxy jobhub:8000 {
+			transport http {
+				read_timeout 300s
+				write_timeout 300s
+			}
+		}
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

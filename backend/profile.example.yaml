@@ -1,0 +1,88 @@
+# Agentic Job Seeker profile: single source of truth. Copy to data/profile.yaml and edit.
+# Secrets do NOT go here. They live in ./.secrets/ (0600).
+
+applicant:
+  name: Your Name
+  email: you@example.com
+  phone: "+91XXXXXXXXXX"
+  current_location: Pune
+  linkedin: https://linkedin.com/in/your-handle
+  github: https://github.com/your-handle
+  resume_path: /app/data/resume.pdf     # upload via the app (Settings -> Resume) or scp
+  headline: DevOps & Multi-Cloud Engineer (Azure, AWS, Kubernetes)
+  education: B.Tech Computer Science, Your College (2022-2025)
+  experience_years: "0"          # user 2026-10-23: keep total experience under 1 year (Naukri shows 0 yr 11 months)
+  willing_to_relocate: "Yes"
+
+experience:
+  # Used verbatim in outgoing text.
+  current_company: Your Company
+  current_title: DevOps Engineer / Intern
+  role_label: DevOps & Multi-Cloud Engineer
+
+compensation:
+  expected_ctc_inr: 400000        # 4.0 LPA (upper end of 3.5-4 LPA target)
+  min_ctc_inr: 350000             # 3.5 LPA floor
+  current_ctc_inr: 0
+  notice_period_days: 0           # user: no notice period (immediate joiner)
+
+search:
+  # Title keywords the platforms are searched with
+  keywords:
+    - DevOps Engineer
+    - Junior DevOps Engineer
+    - Associate DevOps Engineer
+    - Cloud Engineer
+    - Azure DevOps Engineer
+    - AWS Cloud Engineer
+    - Site Reliability Engineer
+    - Kubernetes Engineer
+    - Linux System Administrator
+    - Cloud Support Engineer
+  # Hard title filter applied before ANY application is submitted
+  title_include: "devops|cloud|sre|site reliability|kubernetes|k8s|azure|aws|linux|infrastructure|platform engineer|system admin"
+  title_exclude: "senior|\\bsr\\b|\\blead\\b|manager|architect|principal|\\bhead\\b|\\bstaff\\b|director|\\bvp\\b|\\bl[3-9]\\b|\\bintern\\b|internship"
+  locations: [Pune, Mumbai, Hyderabad, Bangalore]   # user 2026-10-23
+  experience_years_filter: "0-2"
+
+limits:
+  max_applies_per_run_per_platform: 15
+  max_applies_per_day_total: 25
+  delay_between_jobs_sec: 8
+  delay_between_searches_sec: 5
+
+browser:
+  # Apply runs in a hidden (headless) browser: no window or tabs pop up. login_platform is always visible.
+  headless: true
+
+hr_outreach:
+  # Company discovery for the HR email finder
+  industries: ["IT services", "cloud consulting", "DevOps", "software product company", "managed cloud services"]
+  cities:
+    - {country: India, state: Maharashtra, city: Pune}
+    - {country: India, state: Maharashtra, city: Mumbai}
+    - {country: India, state: Telangana, city: Hyderabad}
+    - {country: India, state: Karnataka, city: Bengaluru}
+  company_sizes: ["51-200", "201-500", "501-1000", "1001-5000"]
+  min_confidence: medium          # high | medium | low  (low = unverified pattern guesses, never sent by default)
+  max_emails_per_day: 20
+  one_email_per_company_days: 60
+  send_delay_sec: [45, 90]
+  gmail_user: you@gmail.com
+
+safety:
+  dry_run_default: true           # hub tools default to dry-run
+  # Real submissions/sends are REFUSED until you set this to true after reviewing this file.
+  confirmed_by_user: false       # set true yourself after reviewing this file
+
+autopilot:
+  # Used by autopilot_run. Everything here is enforced in code (no human prompts).
+  min_score: 45                  # jobs scoring below this vs your resume are skipped
+  max_discover: 30               # new job pages read per run
+  max_emails_per_run: 8
+  max_lookups: 15                # company-contact lookups (web search + SMTP probes) per run
+  send_window: [9, 19]           # local hours emails may go out (Mon-Sat)
+  apply_limits: {naukri: 10, linkedin: 5}
+  platform_cooldown_hours: 24    # after a restriction/captcha/limit is seen, that platform is skipped and email takes over
+  company_blocklist: [jobgether]
+  polish_model: ""               # optional Ollama model name to polish wording (facts are guarded); empty = off

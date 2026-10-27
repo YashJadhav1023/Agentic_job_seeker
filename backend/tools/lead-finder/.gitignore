@@ -1,0 +1,5 @@
+settings.json
+leads.db
+uploads/
+__pycache__/
+*.pyc

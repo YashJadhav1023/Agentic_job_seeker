@@ -1,0 +1,11 @@
+.venv
+**/__pycache__
+**/.pytest_cache
+.browsers
+.profiles
+.secrets
+data
+runs
+*.log
+tests
+**/node_modules

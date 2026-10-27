@@ -1,0 +1,41 @@
+# Cloud VM stack: Caddy (automatic HTTPS) -> Agentic Job Seeker API. Run from this folder:
+#   ./setup.sh                    # first time: writes .env with random token/passwords
+#   docker compose up -d --build
+services:
+  jobhub:
+    build: ../backend
+    image: agentic-job-seeker:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      JOBHUB_TRUST_PROXY: "1"
+      JOBHUB_REMOTE_BROWSER_URL: "https://${JOBHUB_DOMAIN}/browser/vnc.html?path=browser/websockify&autoconnect=1&resize=scale"
+    volumes:
+      - jobhub-data:/app/data          # profile.yaml, hub.db, resume.pdf, STOP switch
+      - jobhub-runs:/app/runs          # background run logs
+      - jobhub-secrets:/app/.secrets   # gmail_app_password (0600)
+      - jobhub-profiles:/app/.profiles # saved LinkedIn/Naukri/Indeed browser sessions
+    shm_size: "1gb"                    # Chromium crashes with the 64 MB default
+    expose: ["8000", "6080"]           # internal only; Caddy is the single public entrypoint
+    deploy:
+      resources:
+        limits: {memory: 3g}
+
+  caddy:
+    image: caddy:2.11.7-alpine
+    restart: unless-stopped
+    depends_on: [jobhub]
+    env_file: .env
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  jobhub-data:
+  jobhub-runs:
+  jobhub-secrets:
+  jobhub-profiles:
+  caddy-data:
+  caddy-config:

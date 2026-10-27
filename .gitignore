@@ -31,3 +31,11 @@ backend/tools/job-automation/applied_jobs.db
 .idea/
 .vscode/
 .DS_Store
+
+# terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+tfplan
+crash.log
+override.tf

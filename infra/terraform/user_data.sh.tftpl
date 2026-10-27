@@ -1,0 +1,41 @@
+#!/bin/bash
+# First-boot bootstrap for Agentic Job Seeker (rendered by Terraform templatefile). Log: /var/log/ajs-bootstrap.log
+set -euxo pipefail
+exec > /var/log/ajs-bootstrap.log 2>&1
+
+# 4 GB swap: Chromium + Python on a 2 GB instance needs it.
+if [ ! -f /swapfile ]; then
+  fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  echo 'vm.swappiness=20' > /etc/sysctl.d/90-swap.conf && sysctl -p /etc/sysctl.d/90-swap.conf
+fi
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y ca-certificates curl git openssl unattended-upgrades
+
+# Docker (official apt repo)
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
+apt-get update
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+systemctl enable --now docker
+
+# Wait until the Elastic IP is attached (it is associated after the instance starts). IMDSv2 only.
+for i in $(seq 1 60); do
+  T=$(curl -sX PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')
+  IP=$(curl -s -H "X-aws-ec2-metadata-token: $T" http://169.254.169.254/latest/meta-data/public-ipv4 || true)
+  [ "$IP" = "${public_ip}" ] && break
+  sleep 5
+done
+
+DOMAIN="${domain}"
+[ -z "$DOMAIN" ] && DOMAIN="$(echo ${public_ip} | tr . -).sslip.io"
+
+[ -d /opt/ajs ] || git clone --depth 1 --branch "${repo_ref}" "${repo_url}" /opt/ajs
+cd /opt/ajs/deploy
+[ -f .env ] || ./setup.sh "$DOMAIN" > /root/ajs-credentials.txt
+chmod 600 /root/ajs-credentials.txt .env
+docker compose up -d --build
+echo "ready: https://$DOMAIN" >> /root/ajs-credentials.txt

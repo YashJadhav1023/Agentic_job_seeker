@@ -1,0 +1,177 @@
+name: Terraform (AWS)
+
+# Infrastructure as code for the AWS stack in infra/terraform.
+#   push / pull request touching infra/  -> fmt + validate + plan (nothing is changed)
+#   push to main touching infra/         -> plan, then APPLY after you approve the "production" environment
+#   Run workflow (manual)                -> action = plan | apply | destroy, from any branch
+# Needs repository secrets AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY and repository variable BUDGET_EMAIL.
+# Remote state: S3 bucket ajs-tfstate-<account-id> (created on first run: versioned, encrypted, private).
+
+on:
+  push:
+    branches: [main, terraform]
+    paths: ["infra/terraform/**", ".github/workflows/terraform.yml"]
+  pull_request:
+    paths: ["infra/terraform/**", ".github/workflows/terraform.yml"]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: plan = preview only; apply = create/update; destroy = delete everything
+        type: choice
+        options: [plan, apply, destroy]
+        default: plan
+      instance_type:
+        type: choice
+        options: [t4g.small, t4g.micro, t3.small, t3.micro]
+        default: t4g.small
+      domain:
+        description: Optional domain pointing at the Elastic IP (empty = <ip>.sslip.io)
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  TF_VAR_region: ${{ vars.AWS_REGION || 'ap-south-1' }}
+  TF_VAR_budget_email: ${{ vars.BUDGET_EMAIL || 'unset@example.com' }}
+  TF_VAR_instance_type: ${{ inputs.instance_type || 't4g.small' }}
+  TF_VAR_domain: ${{ inputs.domain || '' }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults: {run: {working-directory: infra/terraform}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: {terraform_version: "1.16.7", terraform_wrapper: false}
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false
+      - run: terraform validate
+
+  plan:
+    needs: validate
+    runs-on: ubuntu-latest
+    outputs:
+      will_apply: ${{ steps.mode.outputs.will_apply }}
+      will_destroy: ${{ steps.mode.outputs.will_destroy }}
+      has_creds: ${{ steps.mode.outputs.has_creds }}
+    defaults: {run: {working-directory: infra/terraform}}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decide mode
+        id: mode
+        working-directory: .
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          ACTION: ${{ inputs.action }}
+        run: |
+          APPLY=false; DESTROY=false
+          if [ "$EVENT" = workflow_dispatch ] && [ "$ACTION" = apply ]; then APPLY=true; fi
+          if [ "$EVENT" = workflow_dispatch ] && [ "$ACTION" = destroy ]; then DESTROY=true; fi
+          if [ "$EVENT" = push ] && [ "$REF" = refs/heads/main ]; then APPLY=true; fi
+          echo "will_apply=$APPLY" >> "$GITHUB_OUTPUT"
+          echo "will_destroy=$DESTROY" >> "$GITHUB_OUTPUT"
+          if [ -n "$AWS_ACCESS_KEY_ID" ]; then echo "has_creds=true" >> "$GITHUB_OUTPUT"; else
+            echo "has_creds=false" >> "$GITHUB_OUTPUT"; echo "::warning::AWS secrets not available (fork PR or not set) - skipping plan"; fi
+          if [ "$APPLY" = true ] && [ "${TF_VAR_budget_email}" = "unset@example.com" ]; then
+            echo "::error::Set the repository variable BUDGET_EMAIL (Settings > Secrets and variables > Actions > Variables) before applying"; exit 1; fi
+
+      - uses: hashicorp/setup-terraform@v3
+        if: steps.mode.outputs.has_creds == 'true'
+        with: {terraform_version: "1.16.7", terraform_wrapper: false}
+
+      - name: State bucket (created once, idempotent)
+        if: steps.mode.outputs.has_creds == 'true'
+        id: state
+        working-directory: .
+        run: |
+          set -euo pipefail
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET="ajs-tfstate-${ACCOUNT}"
+          if ! aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            if [ "$AWS_REGION" = us-east-1 ]; then aws s3api create-bucket --bucket "$BUCKET"
+            else aws s3api create-bucket --bucket "$BUCKET" --region "$AWS_REGION" \
+                   --create-bucket-configuration LocationConstraint="$AWS_REGION"; fi
+            aws s3api put-public-access-block --bucket "$BUCKET" --public-access-block-configuration \
+              BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+            aws s3api put-bucket-versioning --bucket "$BUCKET" --versioning-configuration Status=Enabled
+            aws s3api put-bucket-encryption --bucket "$BUCKET" --server-side-encryption-configuration \
+              '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+            echo "created state bucket $BUCKET"
+          fi
+          echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
+
+      - name: Init
+        if: steps.mode.outputs.has_creds == 'true'
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=${{ steps.state.outputs.bucket }}" \
+            -backend-config="key=agentic-job-seeker/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}"
+
+      - name: Plan
+        if: steps.mode.outputs.has_creds == 'true'
+        id: plan
+        run: |
+          set -o pipefail
+          if [ "${{ steps.mode.outputs.will_destroy }}" = true ]; then DESTROY=-destroy; else DESTROY=; fi
+          terraform plan -no-color -out=tfplan $DESTROY | tee plan.txt
+          {
+            echo '### Terraform plan'
+            echo '```'
+            grep -E '^\s*# |^Plan:|^No changes|^Changes to Outputs' plan.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.mode.outputs.has_creds == 'true'
+        with:
+          name: tfplan
+          path: infra/terraform/tfplan
+          retention-days: 3
+
+  apply:
+    needs: plan
+    if: needs.plan.outputs.has_creds == 'true' && (needs.plan.outputs.will_apply == 'true' || needs.plan.outputs.will_destroy == 'true')
+    runs-on: ubuntu-latest
+    environment: production        # <- required reviewers gate this job
+    defaults: {run: {working-directory: infra/terraform}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: {terraform_version: "1.16.7", terraform_wrapper: false}
+      - uses: actions/download-artifact@v4
+        with: {name: tfplan, path: infra/terraform}
+      - name: Init
+        run: |
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          terraform init -reconfigure \
+            -backend-config="bucket=ajs-tfstate-${ACCOUNT}" \
+            -backend-config="key=agentic-job-seeker/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}"
+      - name: Apply the reviewed plan
+        run: terraform apply -no-color tfplan
+      - name: Outputs
+        if: needs.plan.outputs.will_destroy != 'true'
+        run: |
+          {
+            echo "### Deployed"
+            echo "Server URL: \`$(terraform output -raw server_url)\`"
+            echo "Instance: \`$(terraform output -raw instance_id)\`"
+            echo
+            echo "First boot installs Docker and builds the image (~10 min). Then read the API token once:"
+            echo "\`$(terraform output -raw get_credentials)\`"
+          } >> "$GITHUB_STEP_SUMMARY"

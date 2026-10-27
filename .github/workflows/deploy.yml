@@ -2,8 +2,8 @@ name: Deploy
 
 # Continuous deployment: after CI passes on main, pull the commit on the EC2 host and rebuild the containers
 # through SSM Run Command (no SSH port, no inbound access). Uses repository secrets
-# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY. The instance is found from the CloudFormation stack, so there is
-# nothing else to configure. Skips cleanly when the secrets or the stack do not exist yet.
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY. The instance is found by its Project tag (created by Terraform), so
+# there is nothing else to configure. Skips cleanly when the secrets or the instance do not exist yet.
 
 on:
   workflow_run:
@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  STACK: agentic-job-seeker
+  PROJECT: agentic-job-seeker
 
 jobs:
   deploy:
@@ -36,9 +36,10 @@ jobs:
         id: find
         run: |
           if [ -z "$AWS_ACCESS_KEY_ID" ]; then echo "::notice::AWS secrets not set - skipping deploy"; exit 0; fi
-          ID=$(aws cloudformation describe-stacks --stack-name "$STACK" \
-                 --query 'Stacks[0].Outputs[?OutputKey==`InstanceId`].OutputValue' --output text 2>/dev/null || true)
-          if [ -z "$ID" ] || [ "$ID" = "None" ]; then echo "::notice::stack $STACK not found - run the Infra workflow first"; exit 0; fi
+          ID=$(aws ec2 describe-instances \
+                 --filters "Name=tag:Project,Values=$PROJECT" "Name=instance-state-name,Values=running" \
+                 --query 'Reservations[0].Instances[0].InstanceId' --output text 2>/dev/null || true)
+          if [ -z "$ID" ] || [ "$ID" = "None" ]; then echo "::notice::no running instance tagged Project=$PROJECT - run the Terraform workflow first"; exit 0; fi
           echo "instance=$ID" >> "$GITHUB_OUTPUT"
 
       - name: Pull + rebuild on the instance

@@ -1,14 +1,40 @@
 {
   "Version": "2012-10-17",
   "Statement": [
-    {"Sid": "StackAndCompute", "Effect": "Allow",
-     "Action": ["cloudformation:*", "ec2:*", "ssm:SendCommand", "ssm:GetCommandInvocation", "ssm:ListCommandInvocations",
-                "ssm:GetParameters", "ssm:GetParameter", "ssm:StartSession", "budgets:*", "sts:GetCallerIdentity"],
-     "Resource": "*"},
-    {"Sid": "StackRolesOnly", "Effect": "Allow",
-     "Action": ["iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:PassRole", "iam:AttachRolePolicy", "iam:DetachRolePolicy",
-                "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile", "iam:GetInstanceProfile",
-                "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile", "iam:TagRole"],
-     "Resource": ["arn:aws:iam::*:role/agentic-job-seeker-*", "arn:aws:iam::*:instance-profile/agentic-job-seeker-*"]}
+    {
+      "Sid": "ComputeAndNetwork",
+      "Effect": "Allow",
+      "Action": ["ec2:*", "budgets:*", "sts:GetCallerIdentity"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DeployViaSsm",
+      "Effect": "Allow",
+      "Action": ["ssm:SendCommand", "ssm:GetCommandInvocation", "ssm:ListCommandInvocations", "ssm:StartSession", "ssm:TerminateSession", "ssm:DescribeInstanceInformation"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadUbuntuAmiParameter",
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter", "ssm:GetParameters"],
+      "Resource": "arn:aws:ssm:*::parameter/aws/service/canonical/*"
+    },
+    {
+      "Sid": "ProjectIamOnly",
+      "Effect": "Allow",
+      "Action": ["iam:*"],
+      "Resource": [
+        "arn:aws:iam::*:role/agentic-job-seeker-*",
+        "arn:aws:iam::*:instance-profile/agentic-job-seeker-*"
+      ]
+    },
+    {
+      "Sid": "TerraformStateBucket",
+      "Effect": "Allow",
+      "Action": ["s3:CreateBucket", "s3:ListBucket", "s3:GetBucketLocation", "s3:GetBucketVersioning", "s3:PutBucketVersioning",
+                 "s3:GetBucketPublicAccessBlock", "s3:PutBucketPublicAccessBlock", "s3:GetEncryptionConfiguration",
+                 "s3:PutEncryptionConfiguration", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": ["arn:aws:s3:::ajs-tfstate-*", "arn:aws:s3:::ajs-tfstate-*/*"]
+    }
   ]
 }

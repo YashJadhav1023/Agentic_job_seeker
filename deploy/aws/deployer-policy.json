@@ -1,0 +1,14 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {"Sid": "StackAndCompute", "Effect": "Allow",
+     "Action": ["cloudformation:*", "ec2:*", "ssm:SendCommand", "ssm:GetCommandInvocation", "ssm:ListCommandInvocations",
+                "ssm:GetParameters", "ssm:GetParameter", "ssm:StartSession", "budgets:*", "sts:GetCallerIdentity"],
+     "Resource": "*"},
+    {"Sid": "StackRolesOnly", "Effect": "Allow",
+     "Action": ["iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:PassRole", "iam:AttachRolePolicy", "iam:DetachRolePolicy",
+                "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile", "iam:GetInstanceProfile",
+                "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile", "iam:TagRole"],
+     "Resource": ["arn:aws:iam::*:role/agentic-job-seeker-*", "arn:aws:iam::*:instance-profile/agentic-job-seeker-*"]}
+  ]
+}

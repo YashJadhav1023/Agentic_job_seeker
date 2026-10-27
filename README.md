@@ -16,8 +16,8 @@ and verification, JD-tailored application emails with your resume attached, and 
 | --- | --- |
 | `backend/` | job-hub tools (`hub/`), vendored bots (`tools/`), FastAPI layer `hub/api.py`, Dockerfile, tests |
 | `mobile/` | Flutter Android app (Material 3, Riverpod, go_router) |
-| `deploy/` | `docker-compose.yml` + `Caddyfile` + `setup.sh`; `deploy/aws/cloudformation.yaml` for AWS |
-| `.github/workflows/` | `ci.yml` (tests, Docker smoke test, APK build) and `deploy.yml` (CD to AWS over SSM) |
+| `deploy/` | `docker-compose.yml` + `Caddyfile` + `setup.sh`; `deploy/aws/` CloudFormation template + least-privilege deployer policy |
+| `.github/workflows/` | `ci.yml` (tests, Docker smoke test, APK build), `infra.yml` (AWS stack) and `deploy.yml` (CD over SSM) |
 
 ## Safety model (unchanged from job-hub)
 
@@ -41,21 +41,21 @@ and verification, JD-tailored application emails with your resume attached, and 
 The app reads the catalogue from `GET /api/v1/tools` and builds each tool's form from its JSON schema, so a tool
 added on the server shows up in the app without an app update.
 
-## Deploy on AWS (one EC2 instance)
+## Deploy on AWS (one EC2 instance, all from GitHub Actions)
 
 `deploy/aws/cloudformation.yaml` creates: one EC2 instance (default `t4g.small` ARM 2 GB, Ubuntu 24.04, 30 GB gp3,
 4 GB swap, CPU credits = *standard* so it can never burst into extra charges), an Elastic IP, a security group
-with only 80/443 open, an SSM role (no SSH needed), the GitHub OIDC deploy role, and a **$1 budget alarm**.
+with only 80/443 open, an SSM role (no SSH needed) and a **$1 budget alarm**.
 The instance installs Docker, clones this repo and starts the stack on first boot.
 
-```bash
-aws cloudformation deploy --region ap-south-1 --stack-name agentic-job-seeker \
-  --template-file deploy/aws/cloudformation.yaml --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides BudgetEmail=you@example.com InstanceType=t4g.small
-aws cloudformation describe-stacks --region ap-south-1 --stack-name agentic-job-seeker --query 'Stacks[0].Outputs'
-# API token + remote-browser login (printed once by setup.sh on the instance):
-aws ssm start-session --region ap-south-1 --target <InstanceId>     # then: sudo cat /root/ajs-credentials.txt
-```
+1. GitHub repo → Settings → Secrets and variables → Actions → add secrets `AWS_ACCESS_KEY_ID` and
+   `AWS_SECRET_ACCESS_KEY` (use a dedicated IAM user with `deploy/aws/deployer-policy.json`, not an admin key).
+   Optional variable `AWS_REGION` (default `ap-south-1`).
+2. Settings → Environments → `production` → add yourself as a required reviewer (gates every infra/deploy run).
+3. Actions → **Infra (AWS)** → Run workflow → `plan` (shows what would be created, changes nothing) → run again with `apply`.
+4. Fetch the API token once (printed by `setup.sh` on the instance):
+   `aws ssm start-session --target <InstanceId>` then `sudo cat /root/ajs-credentials.txt`.
+5. From then on every push to `main` that passes CI is deployed automatically by the **Deploy** workflow.
 
 Without your own domain the server URL is `https://<elastic-ip-with-dashes>.sslip.io` (free wildcard DNS,
 real Let's Encrypt certificate).
@@ -71,10 +71,10 @@ Any other Linux VM works the same way: install Docker, clone, `cd deploy && ./se
 
 - **CI** (`ci.yml`, every push/PR): backend `pytest`, Docker image build + `/health` smoke test,
   `flutter analyze` + `flutter test` + release APK (downloadable artifact; attached to a GitHub Release on `v*` tags).
-- **Deploy** (`deploy.yml`, after CI passes on `main`): assumes the OIDC role and runs
-  `git checkout <sha> && docker compose up -d --build` on the instance through SSM Run Command, then checks `/health`.
-  Set repository **variables** `AWS_DEPLOY_ROLE_ARN`, `AWS_REGION`, `EC2_INSTANCE_ID` from the stack outputs.
-  No AWS keys are stored in GitHub. Until the variables exist the job is skipped.
+- **Infra** (`infra.yml`, manual): lint, then `plan` / `apply` / `destroy` of the CloudFormation stack.
+- **Deploy** (`deploy.yml`, after CI passes on `main`): finds the instance from the stack outputs and runs
+  `git checkout <sha> && docker compose up -d --build` there through SSM Run Command, then checks `/health`.
+  It skips itself until the AWS secrets and the stack exist.
 - Optional APK signing secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
   `ANDROID_KEY_PASSWORD` (otherwise the APK is debug-signed, which installs fine for personal use).
 
@@ -94,7 +94,7 @@ Any other Linux VM works the same way: install Docker, clone, `cd deploy && ./se
 ```bash
 cd backend && uv venv -p 3.12 .venv && uv pip install -p .venv/bin/python -r requirements.txt -r requirements-dev.txt
 .venv/bin/python -m pytest -q tests                      # resume-based tests need JOBHUB_PROFILE=<your profile.yaml>
-JOBHUB_API_TOKEN=$(openssl rand -hex 32) .venv/bin/uvicorn hub.api:create_app --factory --app-dir hub --port 8000
+JOBHUB_API_TOKEN=$(openssl rand -hex 32) .venv/bin/uvicorn api:create_app --factory --app-dir hub --port 8000
 .venv/bin/python hub/server.py                           # same tools as a stdio MCP server
 
 cd mobile && flutter pub get && flutter analyze && flutter test && flutter build apk

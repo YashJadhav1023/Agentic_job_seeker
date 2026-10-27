@@ -1,10 +1,9 @@
 name: Deploy
 
-# Continuous deployment to the EC2 host created by deploy/aws/cloudformation.yaml.
-# Auth is GitHub OIDC -> IAM role (no AWS keys stored in GitHub). The role may only run
-# AWS-RunShellScript on that one instance. Configure once in GitHub > Settings > Secrets and variables > Actions > Variables:
-#   AWS_DEPLOY_ROLE_ARN, AWS_REGION, EC2_INSTANCE_ID   (all printed as CloudFormation stack outputs)
-# Until those variables exist this workflow skips itself, so CI stays green.
+# Continuous deployment: after CI passes on main, pull the commit on the EC2 host and rebuild the containers
+# through SSM Run Command (no SSH port, no inbound access). Uses repository secrets
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY. The instance is found from the CloudFormation stack, so there is
+# nothing else to configure. Skips cleanly when the secrets or the stack do not exist yet.
 
 on:
   workflow_run:
@@ -14,37 +13,44 @@ on:
   workflow_dispatch:
 
 permissions:
-  id-token: write
   contents: read
 
 concurrency:
   group: deploy-production
   cancel-in-progress: false
 
+env:
+  STACK: agentic-job-seeker
+
 jobs:
   deploy:
-    if: >-
-      vars.AWS_DEPLOY_ROLE_ARN != '' &&
-      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment: production
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
     steps:
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+      - name: Find instance
+        id: find
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ]; then echo "::notice::AWS secrets not set - skipping deploy"; exit 0; fi
+          ID=$(aws cloudformation describe-stacks --stack-name "$STACK" \
+                 --query 'Stacks[0].Outputs[?OutputKey==`InstanceId`].OutputValue' --output text 2>/dev/null || true)
+          if [ -z "$ID" ] || [ "$ID" = "None" ]; then echo "::notice::stack $STACK not found - run the Infra workflow first"; exit 0; fi
+          echo "instance=$ID" >> "$GITHUB_OUTPUT"
 
-      - name: Pull + rebuild on the instance (SSM Run Command)
+      - name: Pull + rebuild on the instance
         id: send
+        if: steps.find.outputs.instance != ''
         env:
           SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          INSTANCE: ${{ steps.find.outputs.instance }}
         run: |
           set -euo pipefail
-          CMD_ID=$(aws ssm send-command \
-            --instance-ids "${{ vars.EC2_INSTANCE_ID }}" \
-            --document-name AWS-RunShellScript \
-            --comment "deploy ${SHA::7}" \
-            --timeout-seconds 1800 \
+          CMD_ID=$(aws ssm send-command --instance-ids "$INSTANCE" --document-name AWS-RunShellScript \
+            --comment "deploy ${SHA::7}" --timeout-seconds 1800 \
             --parameters "commands=[
               \"set -euo pipefail\",
               \"cd /opt/ajs\",
@@ -53,23 +59,23 @@ jobs:
               \"cd deploy && docker compose up -d --build --remove-orphans\",
               \"docker image prune -f\",
               \"for i in \$(seq 1 30); do docker compose exec -T jobhub curl -fsS http://127.0.0.1:8000/health && exit 0; sleep 5; done; docker compose logs --tail 80 jobhub; exit 1\"
-            ]" \
-            --query Command.CommandId --output text)
+            ]" --query Command.CommandId --output text)
           echo "id=$CMD_ID" >> "$GITHUB_OUTPUT"
 
       - name: Wait for result
+        if: steps.send.outputs.id != ''
+        env:
+          INSTANCE: ${{ steps.find.outputs.instance }}
+          CMD_ID: ${{ steps.send.outputs.id }}
         run: |
           set -uo pipefail
-          ID=${{ steps.send.outputs.id }}
           for i in $(seq 1 180); do
-            STATUS=$(aws ssm get-command-invocation --command-id "$ID" --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
+            STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE" \
                      --query Status --output text 2>/dev/null || echo Pending)
-            case "$STATUS" in
-              Success|Failed|Cancelled|TimedOut) break ;;
-            esac
+            case "$STATUS" in Success|Failed|Cancelled|TimedOut) break ;; esac
             sleep 10
           done
-          aws ssm get-command-invocation --command-id "$ID" --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE" \
             --query '[StandardOutputContent,StandardErrorContent]' --output text | tail -n 60
           echo "status: $STATUS"
           [ "$STATUS" = "Success" ]

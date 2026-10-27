@@ -26,15 +26,6 @@ Parameters:
   BudgetEmail:
     Type: String
     Description: Email for the cost alarm (alerts as soon as any real charge is forecast).
-  GitHubRepo:
-    Type: String
-    Default: YashJadhav1023/Agentic_job_seeker
-    Description: owner/repo allowed to deploy through GitHub Actions OIDC (main branch only)
-  CreateGitHubOidcProvider:
-    Type: String
-    Default: "true"
-    AllowedValues: ["true", "false"]
-    Description: Set false if this AWS account already has the token.actions.githubusercontent.com OIDC provider
   AmiArm64:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id
@@ -45,7 +36,6 @@ Parameters:
 Conditions:
   HasSsh: !Not [!Equals [!Ref SshCidr, ""]]
   HasDomain: !Not [!Equals [!Ref Domain, ""]]
-  CreateOidc: !Equals [!Ref CreateGitHubOidcProvider, "true"]
   IsArm: !Or [!Equals [!Ref InstanceType, t4g.small], !Equals [!Ref InstanceType, t4g.micro]]
 
 Resources:
@@ -146,52 +136,6 @@ Resources:
       AllocationId: !GetAtt ElasticIp.AllocationId
       InstanceId: !Ref Instance
 
-  # ---------------------------------------------------------------- GitHub Actions CD (no long-lived AWS keys)
-  GitHubOidcProvider:
-    Type: AWS::IAM::OIDCProvider
-    Condition: CreateOidc
-    Properties:
-      Url: https://token.actions.githubusercontent.com
-      ClientIdList: [sts.amazonaws.com]
-
-  GitHubDeployRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub agentic-job-seeker-gha-deploy-${AWS::Region}
-      MaxSessionDuration: 3600
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Federated: !If
-                - CreateOidc
-                - !Ref GitHubOidcProvider
-                - !Sub arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
-            Action: sts:AssumeRoleWithWebIdentity
-            Condition:
-              StringEquals:
-                token.actions.githubusercontent.com:aud: sts.amazonaws.com
-              StringLike:
-                # main branch, or the "production" GitHub environment (which you can protect with required reviewers)
-                token.actions.githubusercontent.com:sub:
-                  - !Sub repo:${GitHubRepo}:ref:refs/heads/main
-                  - !Sub repo:${GitHubRepo}:environment:production
-      Policies:
-        - PolicyName: deploy-via-ssm
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              # Only this one instance, only the stock shell-script document.
-              - Effect: Allow
-                Action: ssm:SendCommand
-                Resource:
-                  - !Sub arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/${Instance}
-                  - !Sub arn:aws:ssm:${AWS::Region}::document/AWS-RunShellScript
-              - Effect: Allow
-                Action: [ssm:GetCommandInvocation, ssm:ListCommandInvocations, ec2:DescribeInstances]
-                Resource: "*"
-
   Budget:
     Type: AWS::Budgets::Budget
     Properties:
@@ -219,11 +163,5 @@ Outputs:
     Description: Prints the API token + remote-browser login (via SSM, no SSH needed)
     Value: !Sub aws ssm start-session --target ${Instance} --region ${AWS::Region}   # then: sudo cat /root/ajs-credentials.txt
   InstanceId:
-    Description: GitHub repo variable EC2_INSTANCE_ID
+    Description: Used by the Deploy workflow (looked up automatically from this stack)
     Value: !Ref Instance
-  GitHubDeployRoleArn:
-    Description: GitHub repo variable AWS_DEPLOY_ROLE_ARN
-    Value: !GetAtt GitHubDeployRole.Arn
-  Region:
-    Description: GitHub repo variable AWS_REGION
-    Value: !Ref AWS::Region

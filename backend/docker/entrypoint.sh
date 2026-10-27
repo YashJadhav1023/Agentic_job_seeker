@@ -22,5 +22,5 @@ if [ -n "${JOBHUB_VNC_PASSWORD:-}" ]; then
     echo "entrypoint: remote browser on :6080 (proxied at /browser/)"
 fi
 
-exec uvicorn hub.api:create_app --factory --app-dir /app/hub --host 0.0.0.0 --port 8000 \
+exec uvicorn api:create_app --factory --app-dir /app/hub --host 0.0.0.0 --port 8000 \
     --proxy-headers --forwarded-allow-ips='*' --workers 1

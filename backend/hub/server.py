@@ -55,6 +55,12 @@ TOOLS = {
                           "Runs in background; poll run_status. Sends nothing.",
                           _s("", queries={"type": "array", "items": {"type": "string"},
                                           "description": "optional LinkedIn content-search queries; default covers roles x cities"})),
+    "career_scan": ("Read open roles from company CAREER PAGES with Firecrawl (find the careers page, extract the jobs, keep "
+                    "title-filtered ones) and add them to the job pipeline for scoring + email. Default: known companies not "
+                    "scanned yet. Runs in background; poll run_status. Sends nothing.",
+                    _s("", companies={"type": "array", "items": {"type": "string"},
+                                      "description": "company names or domains; default = known HR-contact domains"},
+                       limit={"type": "integer", "minimum": 1, "maximum": 20, "default": 10})),
     "hiring_post_queries": ("Ready-made search queries to find public LinkedIn/web HIRING POSTS that include an application "
                             "email. Run them with a web search tool, then store hits with add_hr_contact.",
                             _s("", city={"type": "string"})),
@@ -180,7 +186,7 @@ ANNOT = {"hub_status": READ, "list_hr_contacts": READ, "run_status": READ, "trac
          "find_contact": READ_NET, "verify_email": READ_NET, "guard_job_posting": READ, "verify_resume_pdf": READ,
          "find_company_emails": READ_NET, "mailscout_find_emails": READ_NET, "verdict_email_tool": READ_NET, "lead_finder_search": READ_NET, "multi_board_search": READ_NET,
          "login_platform": WRITE, "prepare_linkedin": WRITE, "add_hr_contact": WRITE,
-         "find_hr_emails": dict(WRITE, openWorldHint=True), "apply_jobs": ACT, "send_email": ACT, "send_hr_emails": ACT,
+         "find_hr_emails": dict(WRITE, openWorldHint=True), "career_scan": dict(WRITE, openWorldHint=True), "apply_jobs": ACT, "send_email": ACT, "send_hr_emails": ACT,
          "autopilot_run": ACT, "cancel_run": dict(WRITE, idempotentHint=True), "autopilot_stop": dict(WRITE, idempotentHint=True),
          "suppress_contact": dict(WRITE, idempotentHint=True)}
 
@@ -414,6 +420,11 @@ def scan_hiring_posts(a):
         env["JOBHUB_POST_QUERIES"] = json.dumps(a["queries"])
     return core.spawn("posts", [core.PY, str(core.ROOT / "hub" / "post_scanner.py")], core.ROOT, env, True,
                       {"queries": a.get("queries", "default")})
+
+
+def career_scan(a):
+    return core.spawn("career", [core.PY, str(core.ROOT / "hub" / "career_scan.py"), json.dumps(a)], core.ROOT,
+                      {"PYTHONUNBUFFERED": "1"}, True, a)
 
 
 def hiring_post_queries(a):

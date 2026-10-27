@@ -41,7 +41,7 @@ class ToolSpec {
 }
 
 const _categories = <String, List<String>>{
-  'Discover jobs': ['search_jobs', 'multi_board_search', 'job_detail', 'list_jobs', 'scan_hiring_posts', 'hiring_post_queries'],
+  'Discover jobs': ['search_jobs', 'multi_board_search', 'job_detail', 'list_jobs', 'scan_hiring_posts', 'hiring_post_queries', 'career_scan'],
   'Apply': ['apply_jobs', 'login_platform', 'prepare_linkedin', 'tailor_application', 'verify_resume_pdf', 'guard_job_posting'],
   'Autopilot': ['autopilot_run', 'autopilot_stop', 'run_status', 'cancel_run'],
   'Find contacts': [

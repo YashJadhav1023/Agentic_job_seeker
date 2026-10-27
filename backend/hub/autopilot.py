@@ -474,6 +474,10 @@ def run(opts: dict) -> dict:
         if "naukri" in platforms and not stopped():
             found["naukri"] = discover_naukri(p, c, budget)
         summary["discovered"] = found
+    if opts.get("career", True) and not stopped():
+        import career_scan  # lazy: career_scan imports this module
+        if career_scan.api_key():
+            summary["career"] = career_scan.run({"limit": opts.get("career_companies", 5)})
     summary["scoring"] = score_new(p, c)
     summary["synced_contacts"] = sync_existing_job_contacts()
     if opts.get("apply", True) and not stopped():

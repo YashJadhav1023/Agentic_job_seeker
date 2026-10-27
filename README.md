@@ -2,7 +2,7 @@
 
 Your personal job-search agent, running 24/7 on a small cloud server, controlled from an Android app.
 
-It started as the local `job-hub` MCP server and keeps all of its **32 tools** — job discovery on LinkedIn,
+It started as the local `job-hub` MCP server and keeps all of its original **32 tools** (plus `career_scan`) — job discovery on LinkedIn,
 Naukri, Indeed, Glassdoor and Google Jobs, resume-vs-JD scoring, Easy-Apply bots, HR/recruiter email discovery
 and verification, JD-tailored application emails with your resume attached, and a fully guarded autopilot.
 
@@ -32,7 +32,7 @@ and verification, JD-tailored application emails with your resume attached, and 
 ## The 32 tools
 
 `hub_status` `tracker_report` · `search_jobs` `multi_board_search` (JobSpy) `job_detail` `list_jobs`
-`scan_hiring_posts` `hiring_post_queries` · `apply_jobs` `login_platform` `prepare_linkedin` `tailor_application`
+`scan_hiring_posts` `hiring_post_queries` `career_scan` (Firecrawl) · `apply_jobs` `login_platform` `prepare_linkedin` `tailor_application`
 `verify_resume_pdf` `guard_job_posting` · `autopilot_run` `autopilot_stop` `run_status` `cancel_run` ·
 `find_contact` `find_hr_emails` `find_company_emails` `lead_finder_search` `mailscout_find_emails`
 `verdict_email_tool` `verify_email` `add_hr_contact` `list_hr_contacts` `suppress_contact` ·

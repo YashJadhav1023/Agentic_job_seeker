@@ -131,12 +131,15 @@ def sync_applications() -> int:
                     cur = c.execute(
                         "INSERT OR IGNORE INTO applications(platform, title, company, location, url, status, at) "
                         "VALUES(?,?,?,?,?,?,?)",
-                        (r["platform"].lower(), r["title"], r["company"] or "", r["location"] or "", r["url"], "applied", r["applied_at"])
+                        (r["platform"].lower(), r["title"], r["company"] or "", r["location"] or "", r["url"], "applied",
+                         str(r["applied_at"]).replace(" ", "T"))  # "YYYY-MM-DD HH:MM:SS" sorts below "YYYY-MM-DDT..", so it was never counted as today
                     )
                     if cur.rowcount:
                         added += 1
         except Exception:
             pass
+    with db() as c:  # rows stored before the fix above
+        c.execute("UPDATE applications SET at = REPLACE(at, ' ', 'T') WHERE at LIKE '% %'")
     for txt in (TOOLS / "multi-platform-job-apply-bot").glob("applied_jobs_*.txt"):
         lines = txt.read_text(errors="replace").splitlines()[2:]
         with db() as c:

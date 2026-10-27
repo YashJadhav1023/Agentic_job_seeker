@@ -158,6 +158,9 @@ def test_compose_linkedin_pitch(profile):
 
 def test_smtp_probe_deliverability_and_caching(monkeypatch):
     monkeypatch.setattr(contacts, "mx_hosts", lambda d: ["smtp.google.com"])
+    # deterministic: model "outbound port 25 blocked" instead of probing Google from whatever network runs the test
+    monkeypatch.setattr(contacts, "_PORT_25_AVAILABLE", False)
+    monkeypatch.setattr(contacts.socket, "gethostbyname", lambda h: "192.0.2.1")
     res = contacts.verify_email("careers@testcompany.com")
     assert res in ("valid", "catch_all")
     # Verify cached in email_checks

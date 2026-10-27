@@ -149,6 +149,14 @@ def smtp_probe(email: str, mail_from: str, timeout: int = 12) -> str:
         return "invalid"
 
     h0 = hosts[0].lower()
+    if "mail.protection.outlook.com" in h0:
+        # Microsoft 365 answers "does this mailbox exist" over HTTPS, so no port 25 is needed.
+        from verdict_tool import check_m365
+        exists = check_m365(email, h0)
+        if exists is True:
+            return "valid"
+        if exists is False:
+            return "invalid"
     if any(h in h0 for h in ("protection.outlook.com", "pphosted.com", "barracudanetworks.com", "mimecast.com")):
         return "catch_all"
     return "valid"

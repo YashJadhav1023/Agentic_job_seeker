@@ -80,6 +80,8 @@ final trackerProvider = FutureProvider<Map<String, dynamic>>((ref) async {
 
 final runsProvider = FutureProvider<List<Map<String, dynamic>>>((ref) => requireClient(ref).runs());
 
+final runDetailProvider = FutureProvider.family<Map<String, dynamic>, String>((ref, runId) => requireClient(ref).run(runId, tail: 500));
+
 /// Filters for the Jobs tab.
 class JobFilter {
   const JobFilter({this.status, this.minScore});

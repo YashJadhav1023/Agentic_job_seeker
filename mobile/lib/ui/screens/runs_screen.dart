@@ -115,7 +115,7 @@ class _RunsScreenState extends ConsumerState<RunsScreen> {
                           : null,
                       label: Text('Running ($runningCount)'),
                       selected: _filter == _RunFilter.running,
-                      onSelected: (_) => setState(() => _filter = _RunFilter._running),
+                      onSelected: (_) => setState(() => _filter = _RunFilter.running),
                     ),
                     const SizedBox(width: 8),
                     ChoiceChip(

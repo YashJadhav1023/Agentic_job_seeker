@@ -222,7 +222,7 @@ def login_platform(a):
 def hub_status(_):
     p = core.load_profile()
     ok, why = core.real_actions_allowed(p)
-    chrome = any((core.ROOT / ".browsers").glob("chromium-*/chrome-linux64/chrome"))
+    chrome = any((core.ROOT / ".browsers").glob("chromium-*/chrome-linux*/chrome"))
     return {
         "candidate": p["applicant"]["name"], "target_ctc_lpa": "3.5-4",
         "locations": p["search"]["locations"], "dry_run_default": p["safety"]["dry_run_default"],
@@ -284,7 +284,7 @@ def apply_jobs(a):
            "JOBHUB_PROFILES": str(core.ROOT / ".profiles"), "JOBHUB_LINKEDIN_PROFILE": str(core.ROOT / ".profiles" / "linkedin"),
            "DISPLAY": os.environ.get("DISPLAY", ":0"),
            "PLAYWRIGHT_BROWSERS_PATH": str(core.ROOT / ".browsers"),
-           "JOBHUB_CHROME": str(next((core.ROOT / ".browsers").glob("chromium-*/chrome-linux64/chrome"), ""))}
+           "JOBHUB_CHROME": str(next((core.ROOT / ".browsers").glob("chromium-*/chrome-linux*/chrome"), ""))}
     if platform == "linkedin":
         prepare_linkedin({}, limit=limit)
         argv, cwd = [core.PY, str(core.ROOT / "hub" / "linkedin_runner.py")], core.ROOT

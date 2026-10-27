@@ -14,7 +14,7 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 
 
 def chrome_major() -> str:
-    exe = next((ROOT / ".browsers").glob("chromium-*/chrome-linux64/chrome"), None)
+    exe = next((ROOT / ".browsers").glob("chromium-*/chrome-linux*/chrome"), None)
     try:
         return re.search(r"(\d+)\.", subprocess.run([str(exe), "--version"], capture_output=True, text=True, timeout=10).stdout).group(1)
     except Exception:  # noqa: BLE001

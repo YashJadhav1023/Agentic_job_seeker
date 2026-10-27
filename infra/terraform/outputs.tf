@@ -11,7 +11,17 @@ output "instance_id" {
   value = aws_instance.this.id
 }
 
-output "get_credentials" {
-  description = "Prints the API token + remote-browser login once (created by setup.sh on first boot)"
-  value       = "aws ssm start-session --region ${var.region} --target ${aws_instance.this.id}   # then: sudo cat /root/ajs-credentials.txt"
+output "ssm_prefix" {
+  description = "Parameter Store path holding all secrets (<prefix>/secret/*) and config (<prefix>/env/*)"
+  value       = local.ssm_prefix
+}
+
+output "get_api_token" {
+  description = "Read the app's API token from Parameter Store (needs AWS credentials with ssm:GetParameter on the prefix)"
+  value       = "aws ssm get-parameter --region ${var.region} --name ${local.ssm_prefix}/secret/JOBHUB_API_TOKEN --with-decryption --query Parameter.Value --output text"
+}
+
+output "shell_access" {
+  description = "Shell on the instance without SSH"
+  value       = "aws ssm start-session --region ${var.region} --target ${aws_instance.this.id}"
 }

@@ -30,12 +30,21 @@ for i in $(seq 1 60); do
   sleep 5
 done
 
-DOMAIN="${domain}"
-[ -z "$DOMAIN" ] && DOMAIN="$(echo ${public_ip} | tr . -).sslip.io"
+# AWS CLI v2 (the instance role lets it read/write only the Parameter Store prefix below)
+apt-get install -y unzip
+curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscliv2.zip
+unzip -q /tmp/awscliv2.zip -d /tmp && /tmp/aws/install && rm -rf /tmp/aws /tmp/awscliv2.zip
+
+# Non-secret bootstrap settings. All secrets and env vars live in Parameter Store.
+install -d -m 0755 /etc/ajs
+cat > /etc/ajs/bootstrap.conf <<'CONF'
+AJS_SSM_PREFIX=${ssm_prefix}
+AWS_DEFAULT_REGION=${region}
+CONF
 
 [ -d /opt/ajs ] || git clone --depth 1 --branch "${repo_ref}" "${repo_url}" /opt/ajs
 cd /opt/ajs/deploy
-[ -f .env ] || ./setup.sh "$DOMAIN" > /root/ajs-credentials.txt
-chmod 600 /root/ajs-credentials.txt .env
+chmod +x bootstrap-env.sh
+./bootstrap-env.sh          # generates missing secrets into Parameter Store, writes deploy/.env (mode 600)
 docker compose up -d --build
-echo "ready: https://$DOMAIN" >> /root/ajs-credentials.txt
+echo "ready"

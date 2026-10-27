@@ -169,14 +169,23 @@ resource "aws_instance" "this" {
   }
 
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
-    public_ip = local.public_ip
-    domain    = var.domain
-    repo_url  = var.repo_url
-    repo_ref  = var.repo_ref
+    public_ip  = local.public_ip
+    region     = var.region
+    ssm_prefix = local.ssm_prefix
+    repo_url   = var.repo_url
+    repo_ref   = var.repo_ref
   })
   user_data_replace_on_change = false # never rebuild a live server just because the bootstrap script changed
 
   tags = { Name = var.name }
+
+  # The first boot reads these parameters and writes generated secrets, so they must exist before the instance starts.
+  depends_on = [
+    aws_ssm_parameter.secret,
+    aws_ssm_parameter.env,
+    aws_iam_role_policy.parameters,
+    aws_iam_role_policy_attachment.ssm,
+  ]
 
   lifecycle {
     ignore_changes = [ami, user_data] # AMI updates / re-bootstraps are deliberate: taint the instance to apply them

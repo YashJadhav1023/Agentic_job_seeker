@@ -168,8 +168,30 @@ def applied_today() -> int:
 
 
 # ---------------------------------------------------------------- background runner
+def _profile_group(kind: str) -> str:
+    """Runs that open the same saved browser profile (or are the same kind) must not overlap."""
+    for site in ("linkedin", "naukri", "indeed"):
+        if site in kind or (site == "linkedin" and kind.startswith("posts")):
+            return site
+    return kind
+
+
+def running_conflict(kind: str) -> str:
+    """Run id of an active run that would collide with `kind`, else ''."""
+    group = _profile_group(kind)
+    with db() as c:
+        rows = c.execute("SELECT id, kind FROM runs ORDER BY started DESC LIMIT 30").fetchall()
+    for r in rows:
+        if _profile_group(r["kind"]) == group and run_status(r["id"], 1).get("running"):
+            return r["id"]
+    return ""
+
+
 def spawn(kind: str, argv: list, cwd: Path, env_extra: dict, dry_run: bool, args: dict) -> dict:
     """Start a background run through hub/launcher.py, which records the child's exit code in <log>.exit."""
+    busy = running_conflict(kind)
+    if busy:  # two Chromium instances on one profile crash with "ProcessSingleton" and used to trigger false cooldowns
+        return {"error": f"{kind} cannot start: {busy} is still running (wait for it or cancel_run)"}
     rid = f"{kind}-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4]}"
     log = RUNS / f"{rid}.log"
     env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "DISPLAY", "WAYLAND_DISPLAY",

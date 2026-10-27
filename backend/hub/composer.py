@@ -38,8 +38,29 @@ def resume_text(path: str) -> str:
     p = Path(path)
     key = (str(p), p.stat().st_mtime if p.exists() else 0)
     if key not in _cache:
-        r = subprocess.run(["pdftotext", str(p), "-"], capture_output=True, text=True, timeout=30)
-        _cache[key] = r.stdout if r.returncode == 0 else ""
+        text = ""
+        # 1. Try pymupdf (pure Python, installed via requirements.txt, zero external binary dependency)
+        try:
+            import pymupdf
+            doc = pymupdf.open(str(p))
+            text = "\n".join(page.get_text() for page in doc)
+        except Exception:
+            try:
+                import fitz
+                doc = fitz.open(str(p))
+                text = "\n".join(page.get_text() for page in doc)
+            except Exception:
+                pass
+
+        # 2. Subprocess pdftotext fallback if pymupdf was unavailable
+        if not text.strip():
+            try:
+                r = subprocess.run(["pdftotext", str(p), "-"], capture_output=True, text=True, timeout=30)
+                text = r.stdout if r.returncode == 0 else ""
+            except Exception:
+                pass
+
+        _cache[key] = text
     return _cache[key]
 
 

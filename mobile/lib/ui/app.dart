@@ -9,6 +9,7 @@ import 'screens/runs_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/tool_run_screen.dart';
 import 'screens/tools_screen.dart';
+import 'theme.dart';
 
 GoRouter buildRouter({String initialLocation = '/'}) => GoRouter(
       initialLocation: initialLocation,
@@ -21,13 +22,15 @@ GoRouter buildRouter({String initialLocation = '/'}) => GoRouter(
             StatefulShellBranch(routes: [GoRoute(path: '/contacts', builder: (_, _) => const ContactsScreen())]),
             StatefulShellBranch(routes: [GoRoute(path: '/runs', builder: (_, _) => const RunsScreen())]),
             StatefulShellBranch(routes: [GoRoute(path: '/tools', builder: (_, _) => const ToolsScreen())]),
-            StatefulShellBranch(routes: [
-              GoRoute(
-                path: '/settings',
-                builder: (_, _) => const SettingsScreen(),
-                routes: [GoRoute(path: 'profile', builder: (_, _) => const ProfileEditorScreen())],
-              ),
-            ]),
+            StatefulShellBranch(
+              routes: [
+                GoRoute(
+                  path: '/settings',
+                  builder: (_, _) => const SettingsScreen(),
+                  routes: [GoRoute(path: 'profile', builder: (_, _) => const ProfileEditorScreen())],
+                ),
+              ],
+            ),
           ],
         ),
         GoRoute(
@@ -46,23 +49,52 @@ class _Shell extends StatelessWidget {
   final StatefulNavigationShell shell;
 
   static const _dest = [
-    NavigationDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: 'Home'),
-    NavigationDestination(icon: Icon(Icons.work_outline), selectedIcon: Icon(Icons.work), label: 'Jobs'),
-    NavigationDestination(icon: Icon(Icons.contacts_outlined), selectedIcon: Icon(Icons.contacts), label: 'Contacts'),
-    NavigationDestination(icon: Icon(Icons.terminal_outlined), selectedIcon: Icon(Icons.terminal), label: 'Runs'),
-    NavigationDestination(icon: Icon(Icons.apps_outlined), selectedIcon: Icon(Icons.apps), label: 'Tools'),
-    NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'Settings'),
+    NavigationDestination(
+      icon: Icon(Icons.dashboard_outlined),
+      selectedIcon: Icon(Icons.dashboard_rounded),
+      label: 'Home',
+    ),
+    NavigationDestination(
+      icon: Icon(Icons.work_outline_rounded),
+      selectedIcon: Icon(Icons.work_rounded),
+      label: 'Jobs',
+    ),
+    NavigationDestination(
+      icon: Icon(Icons.people_outline_rounded),
+      selectedIcon: Icon(Icons.people_rounded),
+      label: 'Contacts',
+    ),
+    NavigationDestination(
+      icon: Icon(Icons.terminal_outlined),
+      selectedIcon: Icon(Icons.terminal_rounded),
+      label: 'Runs',
+    ),
+    NavigationDestination(
+      icon: Icon(Icons.grid_view_outlined),
+      selectedIcon: Icon(Icons.grid_view_rounded),
+      label: 'Tools',
+    ),
+    NavigationDestination(
+      icon: Icon(Icons.tune_rounded),
+      selectedIcon: Icon(Icons.tune_rounded),
+      label: 'Settings',
+    ),
   ];
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: shell,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: shell.currentIndex,
-        labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
-        destinations: _dest,
-        onDestinationSelected: (i) => shell.goBranch(i, initialLocation: i == shell.currentIndex),
+      bottomNavigationBar: Container(
+        decoration: const BoxDecoration(
+          border: Border(top: BorderSide(color: AppTheme.borderSubtle, width: 1)),
+        ),
+        child: NavigationBar(
+          selectedIndex: shell.currentIndex,
+          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+          destinations: _dest,
+          onDestinationSelected: (i) => shell.goBranch(i, initialLocation: i == shell.currentIndex),
+        ),
       ),
     );
   }
@@ -79,23 +111,14 @@ class JobSeekerApp extends ConsumerStatefulWidget {
 class _JobSeekerAppState extends ConsumerState<JobSeekerApp> {
   late final GoRouter _router = widget.router ?? buildRouter();
 
-  static ThemeData _theme(Brightness b) {
-    final scheme = ColorScheme.fromSeed(seedColor: const Color(0xFF3F51B5), brightness: b);
-    return ThemeData(
-      colorScheme: scheme,
-      useMaterial3: true,
-      inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder()),
-      cardTheme: const CardThemeData(margin: EdgeInsets.zero),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp.router(
       title: 'Agentic Job Seeker',
       debugShowCheckedModeBanner: false,
-      theme: _theme(Brightness.light),
-      darkTheme: _theme(Brightness.dark),
+      theme: AppTheme.darkTheme,
+      darkTheme: AppTheme.darkTheme,
+      themeMode: ThemeMode.dark,
       routerConfig: _router,
     );
   }

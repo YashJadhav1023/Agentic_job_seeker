@@ -16,8 +16,8 @@ and verification, JD-tailored application emails with your resume attached, and 
 | --- | --- |
 | `backend/` | job-hub tools (`hub/`), vendored bots (`tools/`), FastAPI layer `hub/api.py`, Dockerfile, tests |
 | `mobile/` | Flutter Android app (Material 3, Riverpod, go_router) |
-| `deploy/` | `docker-compose.yml` + `Caddyfile` + `setup.sh`; `deploy/aws/` CloudFormation template + least-privilege deployer policy |
-| `.github/workflows/` | `ci.yml` (tests, Docker smoke test, APK build), `infra.yml` (AWS stack) and `deploy.yml` (CD over SSM) |
+| `deploy/` | `docker-compose.yml` + `Caddyfile` + `setup.sh`; `deploy/bootstrap-env.sh` (first-boot secrets from SSM Parameter Store); `deploy/aws/` least-privilege deployer policy |
+| `.github/workflows/` | `ci.yml` (tests, Docker smoke test, APK build), and `deploy.yml` (CD over SSM). The AWS infrastructure lives in its own repo, [Agentic_job_seeker_Terraform](https://github.com/YashJadhav1023/Agentic_job_seeker_Terraform) |
 
 ## Safety model (unchanged from job-hub)
 
@@ -41,24 +41,19 @@ and verification, JD-tailored application emails with your resume attached, and 
 The app reads the catalogue from `GET /api/v1/tools` and builds each tool's form from its JSON schema, so a tool
 added on the server shows up in the app without an app update.
 
-## Deploy on AWS (one EC2 instance, all from GitHub Actions)
+## Deploy on AWS (infrastructure is in a separate repo)
 
-`deploy/aws/cloudformation.yaml` creates: one EC2 instance (default `t4g.small` ARM 2 GB, Ubuntu 24.04, 30 GB gp3,
-4 GB swap, CPU credits = *standard* so it can never burst into extra charges), an Elastic IP, a security group
-with only 80/443 open, an SSM role (no SSH needed) and a **$1 budget alarm**.
-The instance installs Docker, clones this repo and starts the stack on first boot.
+The AWS stack (EC2 + Elastic IP, security group with only 80/443 open, SSM-only IAM role, SSM Parameter Store, budget alarm)
+is Terraform code in [Agentic_job_seeker_Terraform](https://github.com/YashJadhav1023/Agentic_job_seeker_Terraform), run from
+its GitHub Actions (`plan` / `apply` / `destroy`). On first boot the instance clones this repo, runs `deploy/bootstrap-env.sh`
+(generates the API token and passwords into Parameter Store, writes `deploy/.env`) and starts the stack.
 
-1. GitHub repo → Settings → Secrets and variables → Actions → add secrets `AWS_ACCESS_KEY_ID` and
-   `AWS_SECRET_ACCESS_KEY` (use a dedicated IAM user with `deploy/aws/deployer-policy.json`, not an admin key).
-   Optional variable `AWS_REGION` (default `ap-south-1`).
-2. Settings → Environments → `production` → add yourself as a required reviewer (gates every infra/deploy run).
-3. Actions → **Infra (AWS)** → Run workflow → `plan` (shows what would be created, changes nothing) → run again with `apply`.
-4. Fetch the API token once (printed by `setup.sh` on the instance):
-   `aws ssm start-session --target <InstanceId>` then `sudo cat /root/ajs-credentials.txt`.
-5. From then on every push to `main` that passes CI is deployed automatically by the **Deploy** workflow.
+1. In the Terraform repo: add secrets `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` and variable `BUDGET_EMAIL`, then run the workflow with `plan`, then `apply`.
+2. In this repo add the same two AWS secrets (policy: `deploy/aws/deployer-policy.json`) and add yourself as a required reviewer on the `production` environment.
+3. Read the API token: `aws ssm get-parameter --name /agentic-job-seeker/secret/JOBHUB_API_TOKEN --with-decryption --query Parameter.Value --output text`.
+4. From then on every push to `main` that passes CI is deployed by the **Deploy** workflow.
 
-Without your own domain the server URL is `https://<elastic-ip-with-dashes>.sslip.io` (free wildcard DNS,
-real Let's Encrypt certificate).
+Without your own domain the server URL is `https://<elastic-ip-with-dashes>.sslip.io` (free wildcard DNS, real Let's Encrypt certificate).
 
 **Cost — read this.** AWS has no "free forever" option for an always-on server. Accounts created after
 15 July 2025 get a Free plan with up to $200 of credits for 6 months; the eligible instance types
@@ -71,8 +66,7 @@ Any other Linux VM works the same way: install Docker, clone, `cd deploy && ./se
 
 - **CI** (`ci.yml`, every push/PR): backend `pytest`, Docker image build + `/health` smoke test,
   `flutter analyze` + `flutter test` + release APK (downloadable artifact; attached to a GitHub Release on `v*` tags).
-- **Infra** (`infra.yml`, manual): lint, then `plan` / `apply` / `destroy` of the CloudFormation stack.
-- **Deploy** (`deploy.yml`, after CI passes on `main`): finds the instance from the stack outputs and runs
+- **Deploy** (`deploy.yml`, after CI passes on `main`): finds the instance by its `Project` tag and runs
   `git checkout <sha> && docker compose up -d --build` there through SSM Run Command, then checks `/health`.
   It skips itself until the AWS secrets and the stack exist.
 - Optional APK signing secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,

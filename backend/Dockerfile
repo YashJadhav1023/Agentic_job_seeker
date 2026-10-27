@@ -25,6 +25,10 @@ RUN pip install -r requirements.txt \
     && python -m playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 
+# pdftotext reads the resume for job scoring (kept after the heavy layers so they stay cached).
+RUN apt-get update && apt-get install -y --no-install-recommends poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY . .
 RUN ./scripts/fetch_vendored.sh
 

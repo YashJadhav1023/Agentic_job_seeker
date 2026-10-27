@@ -39,6 +39,7 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Smoke test container
         run: |
+          docker run --rm --entrypoint sh agentic-job-seeker:ci -c 'command -v pdftotext && command -v bun'
           docker run -d --name ajs -e JOBHUB_API_TOKEN=$(openssl rand -hex 32) -p 8000:8000 agentic-job-seeker:ci
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/health && exit 0; sleep 2; done
           docker logs ajs; exit 1

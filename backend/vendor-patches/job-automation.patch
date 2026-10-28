@@ -109,14 +109,14 @@ index 37d5723..055b463 100644
      print(f"\n✅ Indeed done — {count} applications")
      return count
 diff --git a/platforms/naukri.py b/platforms/naukri.py
-index ffc5f2d..3352d6f 100644
+index ffc5f2d..f39861c 100644
 --- a/platforms/naukri.py
 +++ b/platforms/naukri.py
 @@ -5,6 +5,7 @@ import yaml
  from playwright.async_api import async_playwright, TimeoutError as PWTimeout
  from utils.logger import already_applied, log_applied
  from utils.browser import get_browser_options
-+from utils.hubguard import title_ok, DRY_RUN, PROFILE_DIR, wait_for_login, single_page, fill_all
++from utils.hubguard import title_ok, DRY_RUN, PROFILE_DIR, wait_for_login, single_page, fill_all, confirmed_applied, external_only
  
  with open("config.yaml") as f:
      cfg = yaml.safe_load(f)
@@ -133,7 +133,29 @@ index ffc5f2d..3352d6f 100644
      if already_applied(url):
          print(f"  ⏭️  Skip (already applied): {title}")
          return False
-@@ -54,26 +61,14 @@ async def apply_to_job(page, url, title, company, location):
+@@ -41,6 +48,16 @@ async def apply_to_job(page, url, title, company, location):
+         await page.goto(url, wait_until="domcontentloaded")
+         await page.wait_for_timeout(2000)
+ 
++        # What can this job page do? Buttons that mention "apply" tell us.
++        labels = [((await b.inner_text()) or "").strip() for b in await page.query_selector_all("button, a")]
++        labels = [t for t in labels if "appl" in t.lower() and len(t) < 60]
++        if any(t.lower() == "applied" for t in labels):
++            print(f"  ⏭️  Skip (already applied on Naukri): {title}")
++            return False
++        if external_only(labels):
++            print(f"  ⏭️  Skip (applies on the company site, not on Naukri): {title}")
++            return False
++
+         # Click Apply button
+         apply_btn = await page.query_selector("button#apply-button, a#apply-button, button.apply-button")
+         if not apply_btn:
+@@ -50,43 +67,43 @@ async def apply_to_job(page, url, title, company, location):
+             print(f"  ❌ No apply button: {title}")
+             return False
+ 
++        before = await page.inner_text("body")
+         await apply_btn.click()
          await page.wait_for_timeout(3000)
  
          # Handle any modal / popup that appears
@@ -157,6 +179,16 @@ index ffc5f2d..3352d6f 100644
 -                    await inp.fill(APPLICANT["name"])
 -            except:
 -                pass
+-
+-        # Submit / confirm
+-        submit = (
+-            await page.query_selector("button:has-text('Submit')") or
+-            await page.query_selector("button:has-text('Apply')") or
+-            await page.query_selector("button:has-text('Confirm')")
+-        )
+-        if submit:
+-            await submit.click()
+-            await page.wait_for_timeout(2000)
 +        # Some jobs show a "Chatbot" apply form — fill every field in one shot
 +        await fill_all(page, [
 +            (["phone", "mobile"], APPLICANT["phone"]),
@@ -165,10 +197,35 @@ index ffc5f2d..3352d6f 100644
 +            (["experience", "year"], APPLICANT["experience_years"]),
 +            (["name"], APPLICANT["name"]),
 +        ])
++
++        async def _confirmed():
++            marker = bool(await page.query_selector("#already-applied, .applied-job-content, .apply-status-header"))
++            return confirmed_applied(before, await page.inner_text("body"), page.url, marker)
++
++        # Submit / confirm (a one-click Easy Apply is already done at this point: do not click again)
++        if not await _confirmed():
++            submit = (
++                await page.query_selector("button:has-text('Submit')") or
++                await page.query_selector("button:has-text('Save')") or
++                await page.query_selector("button:has-text('Confirm')") or
++                await page.query_selector("button:has-text('Apply')")
++            )
++            if submit:
++                await submit.click()
++                await page.wait_for_timeout(2500)
++
++        # Only a confirmation that was NOT on the page before the click counts as an application.
++        if not await _confirmed():
++            print(f"  ❓ Not confirmed (questionnaire left open, company-site redirect or rejected): {title}")
++            return False
  
-         # Submit / confirm
-         submit = (
-@@ -101,11 +96,10 @@ async def apply_to_job(page, url, title, company, location):
+         log_applied(url, title, company, location, PLATFORM)
+-        print(f"  ✅ Applied: {title} @ {company}")
++        print(f"  ✅ Applied (confirmed): {title} @ {company}")
+         await delay()
+         return True
+ 
+@@ -101,11 +118,10 @@ async def apply_to_job(page, url, title, company, location):
  async def run(email, password):
      count = 0
      async with async_playwright() as p:
@@ -183,7 +240,7 @@ index ffc5f2d..3352d6f 100644
  
          for keyword in cfg["keywords"]:
              if count >= LIMITS["max_per_platform"]:
-@@ -119,9 +113,10 @@ async def run(email, password):
+@@ -119,9 +135,10 @@ async def run(email, password):
                  loc = location.lower()
                  # Naukri URL: /react-developer-jobs-in-pune  or  /react-developer-jobs
                  if loc == "remote":
@@ -196,7 +253,16 @@ index ffc5f2d..3352d6f 100644
  
                  print(f"\n🔍 Naukri: '{keyword}' in {location}")
                  try:
-@@ -165,6 +160,6 @@ async def run(email, password):
+@@ -146,7 +163,7 @@ async def run(email, password):
+                             job_title = (await title_el.inner_text()).strip()
+                             job_url = await title_el.get_attribute("href")
+ 
+-                            company_el = await card.query_selector("a.subTitle, a.companyInfo")
++                            company_el = await card.query_selector("a.comp-name, a.subTitle, a.companyInfo")
+                             company = (await company_el.inner_text()).strip() if company_el else ""
+ 
+                             loc_el = await card.query_selector("span.locWdth, li.location")
+@@ -165,6 +182,6 @@ async def run(email, password):
                      print(f"  ⚠️ Search error: {e}")
                      continue
  

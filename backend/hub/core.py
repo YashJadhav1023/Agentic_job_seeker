@@ -102,6 +102,8 @@ def db() -> sqlite3.Connection:
       key TEXT PRIMARY KEY, value TEXT);
     CREATE TABLE IF NOT EXISTS posts_seen(
       fp TEXT PRIMARY KEY, at TEXT, verdict TEXT);
+    CREATE TABLE IF NOT EXISTS form_attempts(
+      id INTEGER PRIMARY KEY, job_id INTEGER, at TEXT, status TEXT, reason TEXT, screenshot TEXT, dry INTEGER DEFAULT 1);
     """)
     return c
 
@@ -201,7 +203,9 @@ def applied_today() -> int:
 def _profile_groups(kind: str) -> set:
     """Browser profiles (or exclusive kinds) a run uses. Runs whose sets intersect must not overlap."""
     if kind.startswith("autopilot"):
-        return {"autopilot", "linkedin", "naukri", "indeed"}
+        return {"autopilot", "career-apply", "linkedin", "naukri", "indeed"}
+    if kind.startswith("career-apply"):
+        return {"career-apply", "autopilot"}
     out = {site for site in ("linkedin", "naukri", "indeed") if site in kind}
     if kind.startswith(("posts", "prepare-linkedin")):
         out.add("linkedin")
@@ -233,6 +237,12 @@ def running_runs() -> list:
     return [r["id"] for r in rows if run_status(r["id"], 1).get("running")]
 
 
+# Env vars that only our own code may see. Runs of kinds in THIRD_PARTY_KINDS execute vendored upstream code.
+THIRD_PARTY_KINDS = ("apply-",)
+SECRET_ENV = {"KIRO_API_KEY", "LLM_API_KEY", "TELEGRAM_BOT_TOKEN", "JOBHUB_API_TOKEN", "JOBHUB_FIRECRAWL_API_KEY",
+              "JOBHUB_VNC_PASSWORD", "JOBHUB_BROWSER_PASSWORD", "JOBHUB_BROWSER_HASH", "FIRECRAWL_API_KEY"}
+
+
 def spawn(kind: str, argv: list, cwd: Path, env_extra: dict, dry_run: bool, args: dict) -> dict:
     """Start a background run through hub/launcher.py, which records the child's exit code in <log>.exit.
     Up to MAX_PARALLEL (default 4) runs at once; runs that share a browser profile never overlap."""
@@ -249,6 +259,8 @@ def spawn(kind: str, argv: list, cwd: Path, env_extra: dict, dry_run: bool, args
                                                          "XAUTHORITY", "XDG_RUNTIME_DIR", "LANG",
                                                          "KIRO_API_KEY", "LLM_API_KEY", "TELEGRAM_BOT_TOKEN")
            or k.startswith(("JOBHUB_", "PLAYWRIGHT_"))}
+    if kind.startswith(THIRD_PARTY_KINDS):  # vendored upstream bots never get keys, the Gmail password or the API token
+        env = {k: v for k, v in env.items() if k not in SECRET_ENV and not k.startswith("JOBHUB_SECRET_")}
     env.update({k: str(v) for k, v in env_extra.items()})
     wrapped = [PY, str(ROOT / "hub" / "launcher.py"), str(log) + ".exit"] + list(argv)
     with open(log, "wb") as lf:

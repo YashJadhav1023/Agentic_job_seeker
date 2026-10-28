@@ -39,6 +39,7 @@ from fastapi.concurrency import run_in_threadpool  # noqa: E402
 from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 
 import core  # noqa: E402
+import keys  # noqa: E402
 import resume  # noqa: E402
 import scheduler  # noqa: E402
 import server  # noqa: E402
@@ -47,7 +48,8 @@ API_VERSION = "1.0.0"
 MIN_TOKEN_LEN = 32
 MAX_RESUME_BYTES = 5 * 1024 * 1024
 MAX_PROFILE_BYTES = 64 * 1024
-ALLOWED_SECRETS = {"gmail_app_password", "reacher.env", "kiro_api_key", "llm_api_key", "telegram_bot_token"}
+ALLOWED_SECRETS = {"gmail_app_password", "reacher.env", "kiro_api_key", "llm_api_key", "telegram_bot_token", "firecrawl_api_key"}
+SECRET_TO_KEY = {v[1]: k for k, v in keys.KNOWN.items()}   # secret file name -> logical key name
 EMAIL_RX = __import__("re").compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 PROFILE_REQUIRED = ("applicant", "compensation", "search", "limits", "hr_outreach", "safety")
 
@@ -272,11 +274,15 @@ def create_app() -> FastAPI:
         with os.fdopen(fd, "w") as fh:
             fh.write(value.strip())
         os.chmod(f, 0o600)
+        if name in SECRET_TO_KEY:
+            keys.clear(SECRET_TO_KEY[name])  # a replaced key gets a fresh start: lift any cooldown
         return {"saved": name}
 
     @app.get("/api/v1/secrets", dependencies=auth)
     def list_secrets():
-        return {"secrets": {n: bool(core.read_secret(n)) for n in sorted(ALLOWED_SECRETS)}}
+        return {"secrets": {n: (keys.present(SECRET_TO_KEY[n]) if n in SECRET_TO_KEY else bool(core.read_secret(n)))
+                            for n in sorted(ALLOWED_SECRETS)},
+                "cooldowns": {k: v["cooldown"] for k, v in keys.report().items() if v["cooldown"]}}
 
     # ------------------------------------------------------------ MCP over HTTP (JSON response mode)
     @app.post("/mcp", dependencies=auth)

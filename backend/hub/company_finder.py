@@ -410,9 +410,10 @@ def find_company_emails(
     check_prefixes: bool = True,
     crawl_depth: int = 8,
     verify: bool = True,
-    limit: int = 20,
+    limit: int = 100,
 ) -> Dict[str, Any]:
     """Find and verify company emails from web harvesting, prefix probing, and person patterns."""
+    limit = max(1, min(int(limit or 100), 100))
     company = (company or "").strip()
     domain = (domain or "").strip().lower()
 

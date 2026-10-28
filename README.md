@@ -68,10 +68,43 @@ apply links, and can send a Telegram alert.
 | `openai` | `llm.base_url`, `llm.model` and the `llm_api_key` secret (DeepSeek, OpenRouter, Groq, OpenAI ...) |
 | `none` | nothing; the profile rules alone decide (previous behaviour) |
 
+## Company career pages: reading jobs and filling the application form
+
+`career_scan` finds open roles on company career pages (Firecrawl). `career_apply` (also run by the autopilot after the
+platform bots and before the email step) opens each good job, follows its Apply button, fills the form from the profile
+and resume, uploads the resume, and submits. It counts the job as applied only when a **new** confirmation appears on
+the page.
+
+It never guesses. It stops without submitting on a CAPTCHA, a login or sign-up wall, or any required field it cannot answer
+from the profile and resume (it never invents employers, degrees, numbers or dates). Salary fields are filled only when
+the unit is clear (LPA, monthly, per annum). Demographic questions get "prefer not to say", or stop the form if there is
+no such option. Marketing opt-ins stay off. Hidden and off-screen fields are never touched. Free-text questions go to the
+configured LLM (`llm.provider`); without one they stop the form. A job whose form cannot be completed stays eligible for
+the email step, except when the form was submitted but unconfirmed (`form_unconfirmed`): then nothing else is sent.
+
+Dry-run (the default) fills the form and saves a screenshot to `data/career_apply/` but never presses Submit. Live
+submission needs `safety.confirmed_by_user: true`. Limits (`autopilot.career_apply_*` in the profile): 3 forms per run,
+5 per day, one per company per 30 days, 2 attempts per job. Turn it off with `autopilot.career_apply: false`.
+
+## API keys
+
+Firecrawl, Kiro, the OpenAI-style LLM key and the Telegram token are read in one place (`hub/keys.py`): the server
+environment first (filled from Parameter Store), then the app's secret files. `UNSET` and other placeholders count as
+missing. A key the provider rejects (401/403) or that is out of credits (402, quota) is paused for 6 hours instead of being
+retried on every run, you get one Telegram alert, and `hub_status` shows it under `key_cooldowns`. Saving a new key in the
+app lifts the pause. Key values are masked in logs, run summaries and error text, and the vendored Naukri/Indeed/LinkedIn
+bots run without any key, the Gmail app password or the API token in their environment.
+
+## Naukri
+
+`autopilot_run` discovers Naukri jobs read-only (it never clicks Apply there). The Naukri bot (`apply_jobs naukri`) clicks
+Apply and fills the questionnaire, and logs an application only when Naukri shows a new confirmation. Jobs that say
+"Apply on company site" are skipped (they are the career-form path), as are jobs you already applied to.
+
 ## The tools
 
 `hub_status` `tracker_report` · `search_jobs` `multi_board_search` (JobSpy) `job_detail` `list_jobs`
-`scan_hiring_posts` `hiring_post_queries` `career_scan` (Firecrawl) · `apply_jobs` `login_platform` `prepare_linkedin` `tailor_application`
+`scan_hiring_posts` `hiring_post_queries` `career_scan` (Firecrawl) `career_apply` · `apply_jobs` `login_platform` `prepare_linkedin` `tailor_application`
 `verify_resume_pdf` `guard_job_posting` · `autopilot_run` `autopilot_stop` `run_status` `cancel_run` ·
 `find_contact` `find_hr_emails` `find_company_emails` `lead_finder_search` `mailscout_find_emails`
 `verdict_email_tool` `verify_email` `add_hr_contact` `list_hr_contacts` `suppress_contact` ·

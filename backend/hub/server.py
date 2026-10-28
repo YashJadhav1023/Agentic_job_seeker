@@ -17,6 +17,7 @@ import core  # noqa: E402
 import autopilot  # noqa: E402
 import composer  # noqa: E402
 import contacts  # noqa: E402
+import keys  # noqa: E402
 import llm  # noqa: E402
 import resume  # noqa: E402
 import scheduler  # noqa: E402
@@ -66,6 +67,15 @@ TOOLS = {
                     _s("", companies={"type": "array", "items": {"type": "string"},
                                       "description": "company names or domains; default = known HR-contact domains"},
                        limit={"type": "integer", "minimum": 1, "maximum": 20, "default": 10})),
+    "career_apply": ("Fill in and submit the APPLICATION FORM of jobs on company career pages (headless browser): opens the job, "
+                     "follows Apply, fills fields from profile.yaml + resume, uploads the resume, answers free-text questions "
+                     "with the LLM, then submits and requires a confirmation. Stops without submitting on CAPTCHA, login or any "
+                     "required question it cannot answer. DRY-RUN by default (fills, screenshots, never submits). "
+                     "Background; poll run_status.",
+                     _s("", job_ids={"type": "array", "items": {"type": "integer"}, "description": "job ids from list_jobs; "
+                                     "default = best eligible career-page jobs"},
+                        limit={"type": "integer", "minimum": 1, "maximum": 10, "default": 3},
+                        dry_run={"type": "boolean", "default": True})),
     "hiring_post_queries": ("Ready-made search queries to find public LinkedIn/web HIRING POSTS that include an application "
                             "email. Run them with a web search tool, then store hits with add_hr_contact.",
                             _s("", city={"type": "string"})),
@@ -76,7 +86,9 @@ TOOLS = {
     "find_hr_emails": ("Discover HR/recruiter emails at companies in a target city (public sources + MX checks). "
                        "Stored in hub DB. Background; poll run_status.",
                        _s("", city={"type": "string", "description": "a city from hr_outreach.cities in the profile"},
-                          industry={"type": "string"}, limit={"type": "integer", "minimum": 1, "maximum": 40})),
+                          industry={"type": "string"},
+                          limit={"type": "integer", "minimum": 1, "maximum": 100, "default": 100,
+                                 "description": "companies to check"})),
     "list_hr_contacts": ("List stored HR contacts.", _s("", min_confidence={"type": "string", "enum": ["low", "medium", "high"]},
                                                         status={"type": "string"}, limit={"type": "integer"})),
     "send_hr_emails": ("Email the best eligible HR contacts from your Gmail (profile hr_outreach.gmail_user) with resume attached. DRY-RUN by "
@@ -139,7 +151,8 @@ TOOLS = {
                                             "description": "max pages to crawl on company website"},
                                verify={"type": "boolean", "default": True,
                                        "description": "verify deliverability via MX, SMTP, M365, and Gravatar"},
-                               limit={"type": "integer", "minimum": 1, "maximum": 50, "default": 20})),
+                               limit={"type": "integer", "minimum": 1, "maximum": 100, "default": 100,
+                                      "description": "max email addresses returned"})),
     "mailscout_find_emails": ("Find business emails and test deliverability using the MailScout library (batuhanaky/mailscout). "
                               "Generates common role prefixes and person name variants with SMTP deliverability checks.",
                               _s("", domain={"type": "string", "description": "target domain, e.g. 'stripe.com'"},
@@ -205,7 +218,7 @@ ANNOT = {"hub_status": READ, "list_hr_contacts": READ, "run_status": READ, "trac
          "find_contact": READ_NET, "verify_email": READ_NET, "guard_job_posting": READ, "verify_resume_pdf": READ,
          "find_company_emails": READ_NET, "mailscout_find_emails": READ_NET, "verdict_email_tool": READ_NET, "lead_finder_search": READ_NET, "multi_board_search": READ_NET,
          "login_platform": WRITE, "prepare_linkedin": WRITE, "add_hr_contact": WRITE,
-         "find_hr_emails": dict(WRITE, openWorldHint=True), "career_scan": dict(WRITE, openWorldHint=True), "apply_jobs": ACT, "send_email": ACT, "send_hr_emails": ACT,
+         "find_hr_emails": dict(WRITE, openWorldHint=True), "career_scan": dict(WRITE, openWorldHint=True), "career_apply": ACT, "apply_jobs": ACT, "send_email": ACT, "send_hr_emails": ACT,
          "autopilot_run": ACT, "cancel_run": dict(WRITE, idempotentHint=True), "autopilot_stop": dict(WRITE, idempotentHint=True),
          "suppress_contact": dict(WRITE, idempotentHint=True), "resume_info": READ, "scheduler_status": READ,
          "resume_to_profile": WRITE, "sync_resume": ACT, "unlink_platform": dict(WRITE, destructiveHint=True)}
@@ -258,10 +271,12 @@ def hub_status(_):
         "credentials": {
             "gmail_app_password": bool(core.read_secret("gmail_app_password")),
             "gmail_user": p["hr_outreach"].get("gmail_user", ""),
-            "kiro_api_key": bool(os.environ.get("KIRO_API_KEY") or core.read_secret("kiro_api_key")),
-            "llm_api_key": bool(os.environ.get("LLM_API_KEY") or core.read_secret("llm_api_key")),
-            "telegram_bot_token": bool(os.environ.get("TELEGRAM_BOT_TOKEN") or core.read_secret("telegram_bot_token")),
+            "kiro_api_key": keys.present("kiro"),
+            "llm_api_key": keys.present("llm"),
+            "telegram_bot_token": keys.present("telegram"),
+            "firecrawl_api_key": keys.present("firecrawl"),
         },
+        "key_cooldowns": {k: v["cooldown"] for k, v in keys.report().items() if v["cooldown"]},
         "resume": resume.info(p),
         "llm": llm.status(p),
         "scheduler": scheduler.status(),
@@ -473,7 +488,7 @@ def find_hr_emails(a):
         return {"error": f"add {a['city']!r} to hr_outreach.cities in the profile ({{country, state, city}}) first"}
     key = re.sub(r"[^a-z0-9]+", "-", key)
     params = {"industry": a.get("industry") or h["industries"][0], "country": country, "state": state, "city": city,
-              "sizes": h["company_sizes"], "roles": ["hr"], "limit": a.get("limit", 10), "verify": True}
+              "sizes": h["company_sizes"], "roles": ["hr"], "limit": max(1, min(int(a.get("limit", 100)), 100)), "verify": True}
     r = core.spawn("hr-" + key, [core.PY, str(core.ROOT / "hub" / "hr_runner.py"), json.dumps(params)],
                    core.ROOT, {}, True, params)
     r["note"] = "Collects only publicly published HR inboxes and pattern-inferred person emails (confidence-labelled)."
@@ -491,6 +506,17 @@ def scan_hiring_posts(a):
 def career_scan(a):
     return core.spawn("career", [core.PY, str(core.ROOT / "hub" / "career_scan.py"), json.dumps(a)], core.ROOT,
                       {"PYTHONUNBUFFERED": "1"}, True, a)
+
+
+def career_apply(a):
+    p = core.load_profile()
+    dry = a.get("dry_run", p["safety"]["dry_run_default"])
+    params = {"dry": bool(dry), "job_ids": a.get("job_ids"), "limit": a.get("limit", 3)}
+    env = {"PYTHONUNBUFFERED": "1", "PLAYWRIGHT_BROWSERS_PATH": str(core.ROOT / ".browsers")}
+    r = core.spawn("career-apply", [core.PY, str(core.ROOT / "hub" / "career_apply.py"), json.dumps(params)], core.ROOT, env, bool(dry),
+                   params)
+    r["note"] = "DRY-RUN: forms are filled and screenshotted, nothing is submitted." if dry else "LIVE: submits application forms."
+    return r
 
 
 def hiring_post_queries(a):
@@ -785,7 +811,7 @@ def find_company_emails(a):
         check_prefixes=a.get("check_prefixes", True),
         crawl_depth=a.get("crawl_depth", 8),
         verify=a.get("verify", True),
-        limit=a.get("limit", 20),
+        limit=a.get("limit", 100),
     )
 
 

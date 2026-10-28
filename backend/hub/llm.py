@@ -22,6 +22,7 @@ import urllib.request
 from pathlib import Path
 
 import core
+import keys
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 DEFAULTS = {"provider": "none", "model": "", "timeout_sec": 120, "ollama_url": "http://127.0.0.1:11434",
@@ -55,20 +56,24 @@ def available(c: dict) -> tuple:
     if p == "kiro":
         if not kiro_bin():
             return False, "kiro-cli not installed (set JOBHUB_INSTALL_KIRO=1 when building the image)"
-        if not (os.environ.get("KIRO_API_KEY") or core.read_secret("kiro_api_key") or c.get("allow_cli_login")):
+        if not (keys.present("kiro") or c.get("allow_cli_login")):
             return False, "KIRO_API_KEY is not set (Settings > Secrets > kiro_api_key, or the server .env)"
+        if keys.failed("kiro"):
+            return False, keys.failed("kiro")
         return True, ""
     if p == "ollama":
         return (True, "") if c.get("model") else (False, "llm.model is empty (e.g. qwen3:8b)")
     if p == "openai":
         if not _openai_key():
             return False, "LLM_API_KEY is not set (Settings > Secrets > llm_api_key)"
+        if keys.failed("llm"):
+            return False, keys.failed("llm")
         return (True, "") if c.get("model") else (False, "llm.model is empty (e.g. deepseek-chat)")
     return False, f"unknown llm.provider {p!r} (kiro | ollama | openai | none)"
 
 
 def _openai_key() -> str:
-    return os.environ.get("LLM_API_KEY") or core.read_secret("llm_api_key") or ""
+    return keys.get("llm")
 
 
 def parse_json(text: str):
@@ -106,7 +111,7 @@ def _sandbox() -> Path:
 
 def _kiro(prompt: str, c: dict) -> str:
     env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "XDG_RUNTIME_DIR", "TMPDIR")}
-    key = os.environ.get("KIRO_API_KEY") or core.read_secret("kiro_api_key")
+    key = keys.get("kiro")
     if key:
         env["KIRO_API_KEY"] = key
     argv = [kiro_bin(), "chat", "--agent", AGENT_NAME, "--no-interactive", "--wrap", "never"]
@@ -119,7 +124,7 @@ def _kiro(prompt: str, c: dict) -> str:
     except subprocess.TimeoutExpired as e:
         raise LLMError("kiro-cli timed out") from e
     if r.returncode != 0:
-        raise LLMError(f"kiro-cli exit {r.returncode}: {ANSI.sub('', r.stderr or r.stdout)[-300:]}")
+        raise LLMError(keys.redact(f"kiro-cli exit {r.returncode}: {ANSI.sub('', r.stderr or r.stdout)[-300:]}"))
     return r.stdout
 
 
@@ -129,7 +134,7 @@ def _http_json(url: str, payload: dict, headers: dict, timeout: int) -> dict:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - URL comes from the owner's profile
             return json.loads(resp.read().decode())
     except Exception as e:  # noqa: BLE001
-        raise LLMError(f"{type(e).__name__}: {str(e)[:200]}") from e
+        raise LLMError(keys.redact(f"{type(e).__name__}: {str(e)[:200]}")) from e
 
 
 def _ollama(prompt: str, c: dict) -> str:
@@ -148,7 +153,7 @@ def _openai(prompt: str, c: dict) -> str:
     try:
         return out["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as e:
-        raise LLMError(f"unexpected API reply: {str(out)[:200]}") from e
+        raise LLMError(keys.redact(f"unexpected API reply: {str(out)[:200]}")) from e
 
 
 PROVIDERS = {"kiro": _kiro, "ollama": _ollama, "openai": _openai}
@@ -160,13 +165,18 @@ def chat_json(prompt: str, c: dict | None = None, retries: int = 1):
     if not ok:
         raise LLMError(why)
     fn = PROVIDERS[c["provider"]]
+    key_name = {"kiro": "kiro", "openai": "llm"}.get(c["provider"])
     last = None
     for _ in range(retries + 1):
         try:
             return parse_json(fn(prompt, c))
         except LLMError as e:
             last = e
-    raise last  # type: ignore[misc]
+            kind = keys.classify(None, str(e)) if key_name else ""
+            if kind:  # key rejected or out of credits: pause this provider instead of retrying every call
+                keys.mark_failed(key_name, kind)
+                break
+    raise LLMError(keys.redact(last)) from None  # never let a key value leave through an error message
 
 
 def status(profile: dict | None = None) -> dict:

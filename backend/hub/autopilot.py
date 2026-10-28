@@ -5,6 +5,8 @@ Flow of one run (all inside one background process, see server.autopilot_run):
   2. score     title filter, years-of-experience, skills overlap with the resume -> jobs.score / status scored|skip
   3. apply     optional Easy-Apply/Naukri bots (existing apply_jobs, own caps). If a bot log shows a restriction
                (captcha, limit, verification, session expired) the platform is put on cooldown.
+  3b. forms    good jobs on company career pages: fill + submit the application form (career_apply.py). A form that
+               cannot be completed safely (CAPTCHA, login, unanswerable required field) falls through to step 4.
   4. email     for good jobs: address in the JD (best) -> company site -> verified role inbox. A job is emailed when
                it names an address, or when its platform is restricted / it has no Easy Apply.
                The email is written from the JD + resume by composer.py and the resume PDF is attached.
@@ -33,7 +35,9 @@ RESTRICT_RX = re.compile(r"restrict|unusual activity|security verification|captc
                          r"session (?:has )?expired|log ?in required|please log ?in", re.I)
 DEFAULTS = {"min_score": 45, "max_discover": 30, "per_query": 8, "max_emails_per_run": 8, "send_window": None, "send_days": None,
             "apply_limits": {"naukri": 10, "linkedin": 5}, "platform_cooldown_hours": 24, "job_age_days": 7,
-            "max_search_queries": 6, "scan_posts": False, "use_jobspy": False, "jobspy_sites": [], "schedule_every_hours": 0,
+            "max_search_queries": 6, "career_apply": True, "career_apply_max_per_day": 5, "career_apply_max_per_run": 3,
+            "career_apply_company_days": 30, "career_apply_retry_days": 3, "career_apply_max_attempts": 2,
+            "scan_posts": False, "use_jobspy": False, "jobspy_sites": [], "schedule_every_hours": 0,
             "company_blocklist": ["jobgether"], "max_years_tolerance": 1, "polish_model": "", "max_lookups": 15}
 DAY_NAMES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
@@ -304,6 +308,30 @@ def apply_platform(profile: dict, c: dict, platform: str, dry: bool) -> dict:
     return {"platform": platform, "state": st.get("state"), "restriction": hit, "run_id": r["run_id"]}
 
 
+# ---------------------------------------------------------------- company career-page application forms
+def form_phase(profile: dict, c: dict, dry: bool) -> dict:
+    """Fill (and, when live actions are allowed, submit) the application form of good jobs on company career pages.
+    Runs as its own process so a browser crash cannot take the autopilot down. Jobs whose form cannot be completed
+    safely stay `scored` and are handled by the email phase."""
+    if not c.get("career_apply", True):
+        return {"skipped": "autopilot.career_apply is false"}
+    import career_apply
+    jobs, why = career_apply.eligible(profile, None, None, dry)
+    if not jobs:
+        return {"skipped": why}
+    try:
+        r = subprocess.run([core.PY, str(core.ROOT / "hub" / "career_apply.py"), json.dumps({"dry": dry, "limit": len(jobs)})],
+                           capture_output=True, text=True, timeout=45 * 60, cwd=str(core.ROOT))
+    except subprocess.TimeoutExpired:
+        return {"error": "career form run timed out"}
+    out = r.stdout
+    i = out.rfind("SUMMARY ")
+    try:
+        return json.loads(out[i + 8:]) if i >= 0 else {"error": f"no summary (exit {r.returncode}): {(r.stderr or out)[-200:]}"}
+    except json.JSONDecodeError:
+        return {"error": f"unreadable summary (exit {r.returncode})"}
+
+
 # ---------------------------------------------------------------- bounce / unsubscribe handling
 UNSUB_RX = re.compile(r"\b(unsubscribe|remove me|do not contact|don'?t contact|stop (?:emailing|sending)|not interested)\b", re.I)
 
@@ -564,6 +592,8 @@ def run(opts: dict) -> dict:
     summary["synced_contacts"] = sync_existing_job_contacts()
     if opts.get("apply", True) and not stopped():
         summary["platform_apply"] = [apply_platform(p, c, pl, dry) for pl in platforms]
+    if opts.get("form", True) and not stopped():
+        summary["career_apply"] = form_phase(p, c, dry)
     if opts.get("email", True) and not stopped():
         summary["email"] = email_phase(p, c, dry)
     return summary

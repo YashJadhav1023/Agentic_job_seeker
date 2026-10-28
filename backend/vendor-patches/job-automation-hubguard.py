@@ -109,3 +109,35 @@ async def wait_for_login(page, url, is_logged_in, timeout=600):
             raise RuntimeError("login timeout - run login_platform first")
         await asyncio.sleep(5); waited += 5
     print("✅ Logged-in session found", flush=True)
+
+
+# ---------------------------------------------------------------- application confirmation (no false "applied")
+# A click on Apply is NOT an application: Naukri may open a questionnaire, send you to the company site, or reject it.
+# A job counts as applied only when a confirmation shows up that was not on the page before the click.
+APPLIED_RX = re.compile(r"successfully applied|applied successfully|you have (?:already )?applied|already applied|"
+                        r"application (?:has been |was )?(?:sent|submitted|received)|applied to\b", re.I)
+EXTERNAL_RX = re.compile(r"(?:apply|continue|view) (?:on|at|in) (?:the )?(?:company|employer|recruiter)(?:'s)? (?:site|website|page)|"
+                         r"company site", re.I)
+
+
+def new_text(before: str, after: str) -> str:
+    """Lines present in `after` that were not in `before` (the page's reaction to our click)."""
+    seen = {ln.strip() for ln in (before or "").splitlines()}
+    return "\n".join(ln.strip() for ln in (after or "").splitlines() if ln.strip() and ln.strip() not in seen)
+
+
+def confirmed_applied(before: str, after: str, url_after: str = "", applied_marker: bool = False) -> bool:
+    """True when the page shows a NEW confirmation after the click. JD text that merely contains 'applied' does not count
+    because it was already there before the click."""
+    if applied_marker:
+        return True
+    if re.search(r"applyconfirm|saveapply|/myapply/|applied=true|success", url_after or "", re.I):
+        return True
+    return bool(APPLIED_RX.search(new_text(before, after)))
+
+
+def external_only(button_texts) -> bool:
+    """The job can only be applied to on the company's own site (nothing we can submit on this platform)."""
+    texts = [(t or "").strip().lower() for t in button_texts]
+    plain_apply = any(t in ("apply", "apply now", "easy apply") for t in texts)
+    return any(EXTERNAL_RX.search(t) for t in texts) and not plain_apply

@@ -5,10 +5,10 @@ Never raises: a failed alert must not break a scan. Returns True when the messag
 from __future__ import annotations
 
 import json
-import os
 import urllib.request
 
 import core
+import keys
 
 
 def telegram_ready(profile: dict) -> bool:
@@ -17,7 +17,7 @@ def telegram_ready(profile: dict) -> bool:
 
 
 def _token() -> str:
-    return os.environ.get("TELEGRAM_BOT_TOKEN") or core.read_secret("telegram_bot_token") or ""
+    return keys.get("telegram")
 
 
 def telegram(profile: dict, text: str) -> bool:

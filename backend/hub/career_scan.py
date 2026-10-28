@@ -5,9 +5,9 @@ keep titles that pass the profile filter and save them as jobs(source='career', 
 email phase of autopilot then handle them like any other job. Needs JOBHUB_FIRECRAWL_API_KEY (Parameter Store secret).
 """
 import json
-import os
 import re
 import sys
+import time
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -17,6 +17,7 @@ import requests  # noqa: E402
 import autopilot  # noqa: E402
 import contacts  # noqa: E402
 import core  # noqa: E402
+import keys  # noqa: E402
 
 API = "https://api.firecrawl.dev/v2"
 CAREER_RX = re.compile(r"/(careers?|jobs?|join-us|work-with-us|openings?|opportunities)(/|$|\?)", re.I)
@@ -31,21 +32,38 @@ SCHEMA = {
 }
 
 
-class OutOfCredits(Exception):
-    pass
+class FirecrawlUnavailable(Exception):
+    """The key is missing, rejected, out of credits or rate limited: stop the scan, do not retry in a loop."""
+
+
+OutOfCredits = FirecrawlUnavailable  # kept for older callers/tests
 
 
 def api_key() -> str:
-    k = (os.environ.get("JOBHUB_FIRECRAWL_API_KEY") or os.environ.get("FIRECRAWL_API_KEY") or "").strip()
-    return "" if k == "UNSET" else k
+    return keys.get("firecrawl")
 
 
 def _post(path: str, body: dict, timeout: int = 90) -> dict:
-    r = requests.post(API + path, json=body, headers={"Authorization": f"Bearer {api_key()}"}, timeout=timeout)
-    if r.status_code == 402:
-        raise OutOfCredits("Firecrawl credits exhausted")
-    r.raise_for_status()
-    return r.json()
+    key = api_key()
+    if not key:
+        raise FirecrawlUnavailable("JOBHUB_FIRECRAWL_API_KEY is not set")
+    cooling = keys.failed("firecrawl")
+    if cooling:
+        raise FirecrawlUnavailable(cooling)
+    for attempt in range(3):
+        r = requests.post(API + path, json=body, headers={"Authorization": f"Bearer {key}"}, timeout=timeout)
+        kind = keys.classify(r.status_code, r.text[:300] if r.status_code >= 400 else "")
+        if kind:
+            keys.mark_failed("firecrawl", kind)
+            raise FirecrawlUnavailable(keys.failed("firecrawl") or kind)
+        if r.status_code == 429 or r.status_code >= 500:  # rate limit / provider hiccup: wait, then try again
+            if attempt == 2:
+                raise FirecrawlUnavailable(f"Firecrawl busy (HTTP {r.status_code})")
+            time.sleep(min(int(r.headers.get("Retry-After", 0) or 0) or 5 * (attempt + 1), 30))
+            continue
+        r.raise_for_status()
+        return r.json()
+    raise FirecrawlUnavailable("Firecrawl unavailable")
 
 
 def find_career_url(domain: str) -> str:
@@ -99,6 +117,8 @@ def default_companies(limit: int) -> list:
 def run(opts: dict) -> dict:
     if not api_key():
         return {"error": "JOBHUB_FIRECRAWL_API_KEY is not set"}
+    if keys.failed("firecrawl"):
+        return {"error": keys.failed("firecrawl")}
     p = core.load_profile()
     limit = int(opts.get("limit", 10))
     companies = opts.get("companies") or default_companies(limit)
@@ -109,13 +129,13 @@ def run(opts: dict) -> dict:
             out["scanned"] += 1
             out["saved"] += n
             print(f"[career] {name}: {n} new jobs", flush=True)
-        except OutOfCredits as e:
-            print(f"[career] stopped: {e}", flush=True)
-            out["stopped"] = str(e)
+        except FirecrawlUnavailable as e:
+            print(f"[career] stopped: {keys.redact(e)}", flush=True)
+            out["stopped"] = keys.redact(e)
             break
         except Exception as e:  # noqa: BLE001 - one broken site must not stop the rest
             out["failed"] += 1
-            print(f"[career] {name}: failed ({str(e)[:100]})", flush=True)
+            print(f"[career] {name}: failed ({keys.redact(e)[:100]})", flush=True)
     return out
 
 

@@ -81,6 +81,12 @@ autopilot:
   schedule_every_hours: 0         # built-in 24/7 scheduler: run the autopilot every N hours (0 = off)
   scan_posts: false               # also scan LinkedIn hiring posts during each autopilot run
   use_jobspy: false               # also pull jobs from JobSpy (LinkedIn guest API, Naukri, Indeed; no login)
+  career_apply: true              # fill + submit application forms of good jobs on company career pages
+  career_apply_max_per_run: 3     # forms per autopilot run
+  career_apply_max_per_day: 5     # forms per day (also counts toward limits.max_applies_per_day_total)
+  career_apply_company_days: 30   # at most one form per company within this many days
+  career_apply_retry_days: 3      # wait before retrying a form that could not be completed
+  career_apply_max_attempts: 2    # give up on a job after this many failed attempts (it then falls back to email)
   apply_limits: {naukri: 10, linkedin: 5}
   platform_cooldown_hours: 24
   company_blocklist: [jobgether]

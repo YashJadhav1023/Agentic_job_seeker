@@ -166,6 +166,34 @@ def create_app() -> FastAPI:
             ids = [r["id"] for r in c.execute("SELECT id FROM run_queue ORDER BY n")]  # waiting runs first
             ids += [r["id"] for r in c.execute("SELECT id FROM runs ORDER BY started DESC LIMIT ?", (limit,))]
         return {"runs": [{k: v for k, v in core.run_status(i, 3).items()} for i in ids]}
+    @app.post("/api/v1/whatsapp/numbers", dependencies=auth)
+    async def whatsapp_numbers(file: UploadFile = File(...), company: str = "", default_country_code: str = ""):
+        """Upload a PDF / Word / Excel / CSV / text file; every phone number in it is added to the WhatsApp list."""
+        import whatsapp
+        data = await file.read(whatsapp.MAX_FILE_BYTES + 1)
+        try:
+            text = await run_in_threadpool(whatsapp.file_to_text, data, file.filename or "")
+        except Exception as e:  # noqa: BLE001 - corrupt or unsupported files are the caller's problem, not a 500
+            raise HTTPException(422, f"could not read the file: {e}") from e
+        return await run_in_threadpool(whatsapp.import_numbers, text, f"file:{(file.filename or '')[:60]}",
+                                       default_country_code or None, company)
+
+    @app.post("/api/v1/whatsapp/webhook")
+    async def whatsapp_webhook(req: Request, s: str = ""):
+        """Called by the gateway for incoming messages. Authenticated by the secret in the URL, not the bearer token."""
+        import whatsapp
+        ip = _client_ip(req)
+        lockout.check(ip)
+        if not hmac.compare_digest(s.encode(), whatsapp.webhook_secret().encode()):
+            lockout.fail(ip)
+            raise HTTPException(401, "bad webhook secret")
+        try:
+            payload = await req.json()
+        except Exception:  # noqa: BLE001
+            return {"ok": True}
+        res = await run_in_threadpool(whatsapp.handle_event, payload)
+        return {"ok": True, **res}
+
     @app.get("/api/v1/queue", dependencies=auth)
     def queue():
         return core.queue_state()

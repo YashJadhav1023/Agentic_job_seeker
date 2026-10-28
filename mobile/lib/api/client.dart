@@ -129,6 +129,14 @@ class ApiClient {
       headers: {..._headers, 'Content-Type': 'application/json'},
       body: jsonEncode({'platform': platform})))) as Map<String, dynamic>;
 
+  /// Upload a PDF / Word / Excel / CSV / text file; every phone number in it joins the WhatsApp list.
+  Future<Map<String, dynamic>> uploadWhatsappNumbers(List<int> bytes, String filename, {String company = ''}) async {
+    final req = http.MultipartRequest('POST', _u('/api/v1/whatsapp/numbers', {if (company.isNotEmpty) 'company': company}))
+      ..headers.addAll(_headers)
+      ..files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
+    return (await _send(() async => http.Response.fromStream(await _http.send(req)))) as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> accounts() async =>
       (await _send(() => _http.get(_u('/api/v1/accounts'), headers: _headers))) as Map<String, dynamic>;
 

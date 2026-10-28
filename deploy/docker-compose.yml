@@ -12,6 +12,7 @@ services:
     env_file: .env
     environment:
       JOBHUB_TRUST_PROXY: "1"
+      JOBHUB_MAX_PARALLEL: "${JOBHUB_MAX_PARALLEL:-2}"   # 2 browser runs at once on the 2 GB server (3 is fine on 4 GB)
       JOBHUB_REMOTE_BROWSER_URL: "https://${JOBHUB_DOMAIN}/browser/vnc.html?path=browser/websockify&autoconnect=1&resize=scale"
     volumes:
       - jobhub-data:/app/data          # profile.yaml, hub.db, resume.pdf, STOP switch
@@ -23,6 +24,55 @@ services:
     deploy:
       resources:
         limits: {memory: 3g}
+
+  # WhatsApp gateway: the upstream Evolution Go image + its PostgreSQL. Started only with COMPOSE_PROFILES=whatsapp
+  # (an SSM env parameter). Not published to the internet: the app reaches it on the compose network and you reach
+  # its Manager page through an SSM port-forward to 127.0.0.1:4000.
+  evolution-postgres:
+    profiles: ["whatsapp"]
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "${EVOLUTION_DB_PASSWORD:-}"
+    volumes:
+      - evolution-pg:/var/lib/postgresql/data
+      - ./evolution/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    deploy:
+      resources:
+        limits: {memory: 256m}
+
+  evolution-go:
+    profiles: ["whatsapp"]
+    image: evoapicloud/evolution-go:0.7.2   # upstream, multi-arch (arm64 ok)
+    restart: unless-stopped
+    depends_on:
+      evolution-postgres: {condition: service_healthy}
+    ports: ["127.0.0.1:4000:4000"]
+    environment:
+      SERVER_PORT: "4000"
+      CLIENT_NAME: "jobseeker"
+      GLOBAL_API_KEY: "${JOBHUB_EVOLUTION_KEY:-}"
+      POSTGRES_AUTH_DB: "postgresql://postgres:${EVOLUTION_DB_PASSWORD:-}@evolution-postgres:5432/evogo_auth?sslmode=disable"
+      POSTGRES_USERS_DB: "postgresql://postgres:${EVOLUTION_DB_PASSWORD:-}@evolution-postgres:5432/evogo_users?sslmode=disable"
+      DATABASE_SAVE_MESSAGES: "false"
+      WADEBUG: "INFO"
+      LOGTYPE: "console"
+      WEBHOOK_FILES: "false"
+      CONNECT_ON_STARTUP: "true"
+      OS_NAME: "Job Seeker"
+      EVENT_IGNORE_STATUS: "true"
+      QRCODE_MAX_COUNT: "10"
+      AMQP_GLOBAL_ENABLED: "false"
+      MINIO_ENABLED: "false"
+    deploy:
+      resources:
+        limits: {memory: 384m}
 
   caddy:
     image: caddy:2.11.7-alpine
@@ -40,5 +90,6 @@ volumes:
   jobhub-runs:
   jobhub-secrets:
   jobhub-profiles:
+  evolution-pg:
   caddy-data:
   caddy-config:

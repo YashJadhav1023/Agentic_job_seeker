@@ -82,6 +82,7 @@ TASKS = {
     "naukri_apply": "Naukri apply",
     "scan_posts": "Scan LinkedIn hiring posts",
     "global_search": "Search all boards",
+    "whatsapp_send": "WhatsApp messages with resume",
     "autopilot": "Full autopilot",
 }
 CATCH_UP_MIN = 90   # a server that was down at the alarm time still runs it if it comes back within this window
@@ -114,7 +115,7 @@ def _clean(a: dict, existing: dict | None = None) -> dict:
     out["days"] = [d for d in DAYS if d in days]           # empty = every day
     tasks = list(out.get("tasks") or [])
     if tasks == ["all"] or "all" in tasks:
-        tasks = [t for t in TASKS if t not in ("global_search", "autopilot")]
+        tasks = [t for t in TASKS if t not in ("global_search", "autopilot", "whatsapp_send")]   # WhatsApp is always opt-in
     bad = [t for t in tasks if t not in TASKS]
     if bad or not tasks:
         raise ValueError(f"tasks must be a non-empty subset of {list(TASKS)} (or ['all'])")
@@ -186,6 +187,8 @@ def _task_call(task: str, al: dict, p: dict) -> tuple:
         return "apply_jobs", {"platform": "naukri", **dry}, False
     if task == "scan_posts":
         return "scan_hiring_posts", {"auto_apply": al.get("auto_apply", False), **dry}, False
+    if task == "whatsapp_send":
+        return "whatsapp_send", {"limit": al.get("bulk_limit", 10), **({"dry_run": al["dry_run"]} if al.get("dry_run") is not None else {})}, False
     if task == "global_search":
         return "global_search", {"auto_apply": al.get("auto_apply", False), **dry}, False
     return "autopilot_run", dict(dry), False

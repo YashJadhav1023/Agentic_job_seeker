@@ -560,6 +560,7 @@ class _QuickActionsSection extends StatelessWidget {
       (Icons.assignment_turned_in_rounded, 'Easy Apply Bot', const Color(0xFF34D399), 'apply_jobs', {}),
       (Icons.contact_mail_rounded, 'Find HR Emails', const Color(0xFFA78BFA), 'find_hr_emails', {}),
       (Icons.forward_to_inbox_rounded, 'Bulk Email HR', const Color(0xFFF472B6), 'send_hr_emails', {}),
+      (Icons.chat_rounded, 'WhatsApp', const Color(0xFF25D366), '_whatsapp', {}),
       (Icons.alarm_rounded, 'Schedule (alarms)', const Color(0xFFFB923C), '_schedule', {}),
       (Icons.insights_rounded, 'Progress Report', const Color(0xFF2DD4BF), '_report', {}),
       (Icons.monitor_heart_rounded, 'System Status', AppTheme.successLight, '_status', {}),
@@ -572,6 +573,8 @@ class _QuickActionsSection extends StatelessWidget {
           context.go('/tools');
         case '_search':
           context.push('/search');
+        case '_whatsapp':
+          context.push('/whatsapp');
         case '_schedule':
           context.push('/schedule');
         case '_report':

@@ -33,6 +33,8 @@ ensure_random() {  # name, length (hex chars via openssl, then trimmed)
 
 ensure_random JOBHUB_API_TOKEN 64
 ensure_random JOBHUB_VNC_PASSWORD 8   # VNC only uses the first 8 characters
+ensure_random JOBHUB_EVOLUTION_KEY 64   # WhatsApp gateway admin key (used by the app and the Manager login)
+ensure_random EVOLUTION_DB_PASSWORD 32  # WhatsApp gateway PostgreSQL password (hex: safe inside a URL)
 
 if missing "$(get_secret JOBHUB_BROWSER_HASH)" || missing "$(get_secret JOBHUB_BROWSER_PASSWORD)"; then
     PW="$(openssl rand -hex 32 | head -c 24)"

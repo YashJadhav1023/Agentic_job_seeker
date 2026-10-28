@@ -12,6 +12,7 @@ import 'screens/schedule_screen.dart';
 import 'screens/runs_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/tool_run_screen.dart';
+import 'screens/whatsapp_screen.dart';
 import 'screens/tools_screen.dart';
 import 'theme.dart';
 
@@ -41,6 +42,9 @@ GoRouter buildRouter({String initialLocation = '/'}) => GoRouter(
         GoRoute(path: '/search', builder: (_, _) => const GlobalSearchScreen()),
         GoRoute(path: '/tools/global_search', builder: (_, _) => const GlobalSearchScreen()),
         GoRoute(path: '/tools/multi_board_search', builder: (_, _) => const GlobalSearchScreen()),
+        GoRoute(path: '/whatsapp', builder: (_, _) => const WhatsAppScreen()),
+        GoRoute(path: '/tools/whatsapp_status', builder: (_, _) => const WhatsAppScreen()),
+        GoRoute(path: '/tools/whatsapp_link', builder: (_, _) => const WhatsAppScreen()),
         GoRoute(path: '/schedule', builder: (_, _) => const ScheduleScreen()),
         GoRoute(path: '/tools/alarm_list', builder: (_, _) => const ScheduleScreen()),
         GoRoute(path: '/tools/alarm_set', builder: (_, _) => const ScheduleScreen()),

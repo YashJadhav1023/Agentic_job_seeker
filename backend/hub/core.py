@@ -102,6 +102,11 @@ def db() -> sqlite3.Connection:
       key TEXT PRIMARY KEY, value TEXT);
     CREATE TABLE IF NOT EXISTS posts_seen(
       fp TEXT PRIMARY KEY, at TEXT, verdict TEXT);
+    CREATE TABLE IF NOT EXISTS wa_contacts(
+      number TEXT PRIMARY KEY, name TEXT, company TEXT, source TEXT, status TEXT DEFAULT 'new', note TEXT,
+      added_at TEXT, sent_at TEXT, last_in_at TEXT);
+    CREATE TABLE IF NOT EXISTS wa_log(
+      id INTEGER PRIMARY KEY, number TEXT, at TEXT, result TEXT);
     CREATE TABLE IF NOT EXISTS run_queue(
       n INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE, kind TEXT, argv TEXT, cwd TEXT, env TEXT,
       dry_run INTEGER, args TEXT, parent TEXT, queued_at TEXT);

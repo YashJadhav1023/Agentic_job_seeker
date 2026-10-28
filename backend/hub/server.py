@@ -254,6 +254,22 @@ TOOLS = {
     "alarm_run_now": ("Run an alarm's tasks right now (id), or an ad-hoc list (tasks=[...] or ['all']). Tasks queue 3 at a time.",
                       _s("", id={"type": "string"}, tasks={"type": "array", "items": {"type": "string"}}, dry_run={"type": "boolean"},
                          auto_apply={"type": "boolean"}, bulk_limit={"type": "integer", "minimum": 1, "maximum": 100})),
+    "whatsapp_status": ("WhatsApp: is the gateway running, is the number linked, settings, contact counts, sent today and the daily cap.", _s("")),
+    "whatsapp_link": ("Link your WhatsApp number: returns a QR code (data URL) to scan from the phone (Linked devices). Call again until state is linked.", _s("")),
+    "whatsapp_unlink": ("Log the linked WhatsApp number out of the gateway.", _s("")),
+    "whatsapp_settings": ("Message template ({name} {candidate} {role} {company}), daily cap (max 50), pause range, default country code, and "
+                          "recipients_expect_my_message (must be true before any live send).",
+                          _s("", template={"type": "string"}, daily_cap={"type": "integer", "minimum": 1, "maximum": 50},
+                             delay_sec={"type": "array", "items": {"type": "integer"}}, default_country_code={"type": "string"},
+                             recipients_expect_my_message={"type": "boolean"})),
+    "whatsapp_import_numbers": ("Add phone numbers to the WhatsApp list from pasted text (one per line, optionally with a name). For a PDF, Word, "
+                                "Excel or CSV file use the upload in the app. Nothing is sent by importing.",
+                                _s("", text={"type": "string"}, company={"type": "string"}, default_country_code={"type": "string"})),
+    "whatsapp_contacts": ("The WhatsApp list with status (new, sent, replied, optout, no_whatsapp, failed).",
+                          _s("", status={"type": "string"}, limit={"type": "integer", "minimum": 1, "maximum": 500})),
+    "whatsapp_send": ("Send each new number a personal message with your resume attached. DRY-RUN (preview) unless dry_run=false, and live also needs "
+                      "the profile's live-actions switch and recipients_expect_my_message=true. Daily cap, pauses and 30-day no-repeat always apply. Background run.",
+                      _s("", limit={"type": "integer", "minimum": 1, "maximum": 50}, dry_run={"type": "boolean"})),
     "queue_status": ("Run queue: what is running now, what is waiting (FIFO) and the limit (3 runs at once).", _s("")),
 }
 READ = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
@@ -270,6 +286,8 @@ ANNOT = {"hub_status": READ, "list_hr_contacts": READ, "run_status": READ, "trac
          "suppress_contact": dict(WRITE, idempotentHint=True), "resume_info": READ, "scheduler_status": READ,
          "resume_to_profile": WRITE, "sync_resume": ACT, "unlink_platform": dict(WRITE, destructiveHint=True),
          "global_search": dict(WRITE, openWorldHint=True), "search_results": READ, "apply_to_jobs": ACT, "queue_status": READ,
+         "whatsapp_status": READ_NET, "whatsapp_link": dict(WRITE, openWorldHint=True), "whatsapp_unlink": dict(WRITE, destructiveHint=True),
+         "whatsapp_settings": dict(WRITE, idempotentHint=True), "whatsapp_import_numbers": WRITE, "whatsapp_contacts": READ, "whatsapp_send": ACT,
          "alarm_list": READ, "alarm_set": dict(WRITE, idempotentHint=True), "alarm_delete": dict(WRITE, destructiveHint=True),
          "alarm_run_now": ACT}
 
@@ -549,6 +567,60 @@ def apply_to_jobs(a):
     r["jobs"] = len(ids)
     r["note"] = ("DRY-RUN: forms are filled and emails drafted, nothing is submitted or sent."
                  if dry else f"LIVE: applying to {len(ids)} job(s) within your daily caps.")
+    return r
+
+
+def whatsapp_status(_):
+    import whatsapp
+    return whatsapp.status()
+
+
+def whatsapp_link(_):
+    import whatsapp
+    return whatsapp.link()
+
+
+def whatsapp_unlink(_):
+    import whatsapp
+    return whatsapp.unlink()
+
+
+def whatsapp_settings(a):
+    import whatsapp
+    try:
+        return whatsapp.save_settings({k: a.get(k) for k in whatsapp.DEFAULTS if k in a}) if a else whatsapp.settings()
+    except (ValueError, TypeError) as e:
+        return {"error": str(e)}
+
+
+def whatsapp_import_numbers(a):
+    import whatsapp
+    return whatsapp.import_numbers(a.get("text", ""), "text", a.get("default_country_code"), a.get("company", ""))
+
+
+def whatsapp_contacts(a):
+    import whatsapp
+    rows = whatsapp.list_contacts(a.get("status", ""), a.get("limit", 100))
+    return {"count": len(rows), "counts": whatsapp.counts(), "contacts": rows}
+
+
+def whatsapp_send(a):
+    import whatsapp
+    p = core.load_profile()
+    dry = a.get("dry_run")
+    dry = True if dry is None else bool(dry)   # WhatsApp is always preview unless asked for explicitly
+    limit = int(a.get("limit", 10))
+    if dry:
+        return whatsapp.preview(min(limit, 10))
+    s = whatsapp.settings()
+    ok, why = core.real_actions_allowed(p)
+    if not ok:
+        return {"error": "live sending blocked: " + why, "hint": "preview with dry_run=true"}
+    if not s["recipients_expect_my_message"]:
+        return {"error": "confirm first: set recipients_expect_my_message=true in whatsapp_settings"}
+    r = core.spawn("task-whatsapp_send", [core.PY, str(core.ROOT / "hub" / "whatsapp.py"), "send", json.dumps({"limit": limit})],
+                   core.ROOT, {"PYTHONUNBUFFERED": "1"}, False, {"limit": limit})
+    r["note"] = f"LIVE: sending up to {min(limit, s['daily_cap'])} messages with pauses of {s['delay_sec'][0]}-{s['delay_sec'][1]} s."
     return r
 
 

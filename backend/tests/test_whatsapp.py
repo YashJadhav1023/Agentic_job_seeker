@@ -167,6 +167,9 @@ def test_link_creates_instance_once_connects_and_returns_the_qr(env):
     assert paths[0] == "/instance/create" and "/instance/connect" in paths and paths[-1] == "/instance/qr"
     create = gw.calls[0]
     assert create[2]["apikey"] == "k" * 64                       # admin key only for create
+    import uuid
+    assert str(uuid.UUID(create[3]["instanceId"])) == create[3]["instanceId"] and create[3]["name"] == "jobseeker"   # the gateway needs a UUID id
+    assert core.kv_get("whatsapp:instance")["id"] == create[3]["instanceId"]
     assert gw.calls[-1][2]["apikey"] == whatsapp.instance_token() != "k" * 64
     connect = next(c for c in gw.calls if c[1] == "/instance/connect")
     assert connect[3]["webhookUrl"].startswith("http://jobhub:8000/api/v1/whatsapp/webhook?s=") and connect[3]["subscribe"] == ["MESSAGE"]

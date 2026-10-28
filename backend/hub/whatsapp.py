@@ -24,6 +24,7 @@ import random
 import re
 import secrets
 import time
+import uuid
 import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -144,12 +145,13 @@ class Evo:
         """Create the instance once (admin key) and point its webhook at this app."""
         if core.kv_get("whatsapp:instance"):
             return
+        iid = str(uuid.uuid4())   # the gateway keys instances by UUID (a plain word is rejected by its database)
         try:
-            self._call("POST", "/instance/create", admin=True, json={"instanceId": "jobseeker", "name": "jobseeker", "token": self.token})
+            self._call("POST", "/instance/create", admin=True, json={"instanceId": iid, "name": "jobseeker", "token": self.token})
         except EvoError as e:
             if "already" not in str(e).lower() and e.status not in (409,):
                 raise
-        core.kv_set("whatsapp:instance", {"name": "jobseeker", "created": core.now_iso()})
+        core.kv_set("whatsapp:instance", {"id": iid, "name": "jobseeker", "created": core.now_iso()})
 
     def connect(self, app_url: str = "http://jobhub:8000") -> None:
         self._call("POST", "/instance/connect", json={

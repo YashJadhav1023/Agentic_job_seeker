@@ -186,12 +186,13 @@ def test_scheduler_retries_when_a_run_is_busy(monkeypatch):
 
 # ---------------------------------------------------------------- parallel runs
 def test_up_to_four_parallel_runs(monkeypatch):
+    monkeypatch.setattr(core, "MAX_PARALLEL", 4)
     monkeypatch.setattr(core, "run_status", lambda rid, tail=1: {"running": True})
     kinds = ["apply-linkedin", "apply-naukri", "career", "hr-pune"]
     for k in kinds:
         assert "run_id" in core.spawn(k, [sys.executable, "-c", "pass"], core.ROOT, {}, True, {}), k
     fifth = core.spawn("verify", [sys.executable, "-c", "pass"], core.ROOT, {}, True, {})
-    assert "limit 4" in fifth["error"]
+    assert fifth["queued"] is True and fifth["position"] == 1
 
 
 def test_autopilot_conflicts_with_platform_runs(monkeypatch):

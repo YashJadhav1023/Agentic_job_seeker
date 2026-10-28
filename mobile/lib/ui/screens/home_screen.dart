@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../state/providers.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import '../widgets/queue_banner.dart';
 import 'runs_screen.dart' show runIsFailed, runIsRunning;
 import 'tool_run_screen.dart';
 
@@ -60,6 +61,7 @@ class HomeScreen extends ConsumerWidget {
               _HeroCard(s),
               const SizedBox(height: 14),
               _SetupChecklist(s),
+              const QueueBanner(),
               _TodayCounters(s),
               const SizedBox(height: 14),
               _AutopilotControl(s),
@@ -130,7 +132,9 @@ class _HeroCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Targeting DevOps & Cloud Roles',
+                      (((s['keywords'] as List?) ?? const []).isEmpty)
+                          ? 'Upload your resume to set your target roles'
+                          : 'Targeting ${((s['keywords'] as List).take(3)).join(' · ')}',
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
@@ -550,15 +554,34 @@ class _QuickActionsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final actions = <(IconData, String, Color, String, Map<String, dynamic>)>[
-      (Icons.travel_explore_rounded, 'Search All Boards', AppTheme.primaryLight, 'multi_board_search', {'save': true}),
-      (Icons.search_rounded, 'LinkedIn Search', const Color(0xFF38BDF8), 'search_jobs', {}),
-      (Icons.dynamic_feed_rounded, 'Scan Hiring Posts', const Color(0xFFFBBF24), 'scan_hiring_posts', {}),
+      (Icons.travel_explore_rounded, 'Search All Boards & Apply', AppTheme.primaryLight, '_search', {}),
+      (Icons.search_rounded, 'LinkedIn Search & Apply', const Color(0xFF38BDF8), 'search_jobs', {'save': true}),
+      (Icons.dynamic_feed_rounded, 'Scan Hiring Posts (bulk)', const Color(0xFFFBBF24), 'scan_hiring_posts', {'max_posts': 80}),
       (Icons.assignment_turned_in_rounded, 'Easy Apply Bot', const Color(0xFF34D399), 'apply_jobs', {}),
       (Icons.contact_mail_rounded, 'Find HR Emails', const Color(0xFFA78BFA), 'find_hr_emails', {}),
-      (Icons.forward_to_inbox_rounded, 'Email Recruiters', const Color(0xFFF472B6), 'send_hr_emails', {}),
-      (Icons.insights_rounded, 'Tracker Report', const Color(0xFF2DD4BF), 'tracker_report', {}),
-      (Icons.grid_view_rounded, 'All 32 Tools', AppTheme.primaryLight, '_all_tools', {}),
+      (Icons.forward_to_inbox_rounded, 'Bulk Email HR', const Color(0xFFF472B6), 'send_hr_emails', {}),
+      (Icons.alarm_rounded, 'Schedule (alarms)', const Color(0xFFFB923C), '_schedule', {}),
+      (Icons.insights_rounded, 'Progress Report', const Color(0xFF2DD4BF), '_report', {}),
+      (Icons.monitor_heart_rounded, 'System Status', AppTheme.successLight, '_status', {}),
+      (Icons.grid_view_rounded, 'All Tools', AppTheme.primaryLight, '_all_tools', {}),
     ];
+
+    void open(BuildContext context, String tool, Map<String, dynamic> args) {
+      switch (tool) {
+        case '_all_tools':
+          context.go('/tools');
+        case '_search':
+          context.push('/search');
+        case '_schedule':
+          context.push('/schedule');
+        case '_report':
+          context.push('/report');
+        case '_status':
+          context.push('/status');
+        default:
+          context.push('/tools/$tool', extra: args);
+      }
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -575,7 +598,7 @@ class _QuickActionsSection extends StatelessWidget {
             for (final (icon, label, color, tool, args) in actions)
               InkWell(
                 borderRadius: BorderRadius.circular(14),
-                onTap: () => tool == '_all_tools' ? context.go('/tools') : context.push('/tools/$tool', extra: args),
+                onTap: () => open(context, tool, args),
                 child: Container(
                   decoration: BoxDecoration(
                     color: AppTheme.card,

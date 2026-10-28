@@ -3,8 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'screens/contacts_screen.dart';
+import 'screens/global_search_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/jobs_screen.dart';
+import 'screens/link_account_screen.dart';
+import 'screens/report_screen.dart';
+import 'screens/schedule_screen.dart';
 import 'screens/runs_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/tool_run_screen.dart';
@@ -32,6 +36,21 @@ GoRouter buildRouter({String initialLocation = '/'}) => GoRouter(
               ],
             ),
           ],
+        ),
+        // Purpose-built screens for tools that used to open as a raw form + JSON dump.
+        GoRoute(path: '/search', builder: (_, _) => const GlobalSearchScreen()),
+        GoRoute(path: '/tools/global_search', builder: (_, _) => const GlobalSearchScreen()),
+        GoRoute(path: '/tools/multi_board_search', builder: (_, _) => const GlobalSearchScreen()),
+        GoRoute(path: '/schedule', builder: (_, _) => const ScheduleScreen()),
+        GoRoute(path: '/tools/alarm_list', builder: (_, _) => const ScheduleScreen()),
+        GoRoute(path: '/tools/alarm_set', builder: (_, _) => const ScheduleScreen()),
+        GoRoute(path: '/report', builder: (_, _) => const ReportScreen()),
+        GoRoute(path: '/tools/tracker_report', builder: (_, _) => const ReportScreen()),
+        GoRoute(path: '/status', builder: (_, _) => const StatusScreen()),
+        GoRoute(path: '/tools/hub_status', builder: (_, _) => const StatusScreen()),
+        GoRoute(
+          path: '/tools/login_platform',
+          builder: (_, s) => LinkAccountScreen(platform: (s.extra as Map?)?['platform'] as String?),
         ),
         GoRoute(
           path: '/tools/:name',

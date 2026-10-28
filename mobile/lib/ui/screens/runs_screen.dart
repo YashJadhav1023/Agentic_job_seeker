@@ -8,10 +8,14 @@ import '../../state/providers.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/log_view.dart';
+import '../widgets/queue_banner.dart';
 import 'tool_run_screen.dart';
 
 /// Human label for a run record's state, shared by the list and Home activity card.
 bool runIsRunning(Map<String, dynamic> r) => r['running'] == true;
+
+/// Waiting in the run queue (at most 3 runs execute at once).
+bool runIsQueued(Map<String, dynamic> r) => r['queued'] == true;
 
 bool runIsFailed(Map<String, dynamic> r) {
   final s = '${r['state']}';
@@ -37,7 +41,7 @@ class _RunsScreenState extends ConsumerState<RunsScreen> {
     super.initState();
     _timer = Timer.periodic(const Duration(seconds: 5), (_) {
       final list = ref.read(runsProvider).value;
-      if (mounted && list != null && list.any(runIsRunning)) ref.invalidate(runsProvider);
+      if (mounted && list != null && list.any((r) => runIsRunning(r) || runIsQueued(r))) ref.invalidate(runsProvider);
     });
   }
 
@@ -68,17 +72,19 @@ class _RunsScreenState extends ConsumerState<RunsScreen> {
         onRetry: () => ref.invalidate(runsProvider),
         data: (all) {
           final runningCount = all.where(runIsRunning).length;
+          final queuedCount = all.where(runIsQueued).length;
           final failedCount = all.where(runIsFailed).length;
-          final okCount = all.length - runningCount - failedCount;
+          final okCount = all.length - runningCount - queuedCount - failedCount;
 
           final list = switch (_filter) {
             _RunFilter.all => all,
-            _RunFilter.running => all.where(runIsRunning).toList(),
+            _RunFilter.running => all.where((r) => runIsRunning(r) || runIsQueued(r)).toList(),
             _RunFilter.failed => all.where(runIsFailed).toList(),
           };
 
           return Column(
             children: [
+              const Padding(padding: EdgeInsets.fromLTRB(16, 8, 16, 0), child: QueueBanner()),
               // Summary KPI Row
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
@@ -87,6 +93,8 @@ class _RunsScreenState extends ConsumerState<RunsScreen> {
                     _MiniStat('Total', '${all.length}', AppTheme.primaryLight),
                     const SizedBox(width: 8),
                     _MiniStat('Running', '$runningCount', AppTheme.secondaryLight),
+                    const SizedBox(width: 8),
+                    _MiniStat('Waiting', '$queuedCount', AppTheme.warningLight),
                     const SizedBox(width: 8),
                     _MiniStat('Passed', '$okCount', AppTheme.successLight),
                     const SizedBox(width: 8),
@@ -113,7 +121,7 @@ class _RunsScreenState extends ConsumerState<RunsScreen> {
                               child: CircularProgressIndicator(strokeWidth: 1.5, color: AppTheme.secondaryLight),
                             )
                           : null,
-                      label: Text('Running ($runningCount)'),
+                      label: Text('Active (${runningCount + queuedCount})'),
                       selected: _filter == _RunFilter.running,
                       onSelected: (_) => setState(() => _filter = _RunFilter.running),
                     ),
@@ -230,6 +238,7 @@ class _RunCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final running = runIsRunning(r);
+    final queued = runIsQueued(r);
     final failed = runIsFailed(r);
     final kind = '${r['kind']}';
     final dryRun = r['dry_run'] == true;
@@ -275,9 +284,9 @@ class _RunCard extends StatelessWidget {
                           child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryLight),
                         )
                       : Icon(
-                          icon,
+                          queued ? Icons.hourglass_top_rounded : icon,
                           size: 18,
-                          color: failed ? AppTheme.error : AppTheme.primaryLight,
+                          color: failed ? AppTheme.error : (queued ? AppTheme.warningLight : AppTheme.primaryLight),
                         ),
                 ),
                 const SizedBox(width: 12),

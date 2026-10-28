@@ -73,8 +73,9 @@ final statusProvider = FutureProvider<Map<String, dynamic>>((ref) async {
   return (r.result as Map).cast<String, dynamic>();
 });
 
-final trackerProvider = FutureProvider<Map<String, dynamic>>((ref) async {
+final trackerProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
   final r = await requireClient(ref).call('tracker_report');
+  if (r.isError || r.result is! Map) throw ApiException(r.error ?? 'tracker_report failed');
   return (r.result as Map).cast<String, dynamic>();
 });
 
@@ -110,4 +111,17 @@ final contactsProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async 
   if (res is Map && res['contacts'] is List) return (res['contacts'] as List).cast<Map<String, dynamic>>();
   if (res is List) return res.cast<Map<String, dynamic>>();
   return const [];
+});
+
+/// Run queue (running now / waiting / limit). Screens that show it refresh it on a timer.
+final queueProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) => requireClient(ref).queue());
+
+/// Linked accounts: LinkedIn / Naukri / Indeed sessions and Gmail.
+final accountsProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) => requireClient(ref).accounts());
+
+/// Alarms (clock-time schedule) plus the task catalogue.
+final alarmsProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
+  final r = await requireClient(ref).call('alarm_list');
+  if (r.isError) throw ApiException(r.error ?? 'alarm_list failed');
+  return (r.result as Map).cast<String, dynamic>();
 });

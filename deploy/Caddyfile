@@ -8,10 +8,12 @@
 		-Server
 	}
 
-	# Remote browser (noVNC) for logging in to job sites. Extra basic-auth layer on top of the VNC password.
+	# Remote browser (noVNC) for signing in to job sites. No login prompts: the app asks the API for a single-use link
+	# (POST /api/v1/browser/session); opening it sets a signed 30-minute cookie that is checked here on every request,
+	# including the websocket. Without the cookie the API answers 401 and nothing reaches noVNC.
 	handle_path /browser/* {
-		basic_auth {
-			{$JOBHUB_BROWSER_USER} {$JOBHUB_BROWSER_HASH}
+		forward_auth jobhub:8000 {
+			uri /internal/browser-auth
 		}
 		reverse_proxy jobhub:6080
 	}

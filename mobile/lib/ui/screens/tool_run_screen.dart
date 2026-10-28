@@ -27,7 +27,7 @@ class _ToolRunScreenState extends ConsumerState<ToolRunScreen> {
   Object? _error;
 
   /// A call is "live" when the tool can act on the outside world and dry-run is not explicitly on.
-  bool _isLive(ToolSpec t) => t.destructive && _args['dry_run'] != true;
+  bool _isLive(ToolSpec t) => (t.destructive || _args['auto_apply'] == true) && _args['dry_run'] != true;
 
   Future<bool> _confirmLive(ToolSpec t) async {
     return await showDialog<bool>(
@@ -131,6 +131,17 @@ class _ToolRunScreenState extends ConsumerState<ToolRunScreen> {
       ]),
       if (res is Map && res['note'] != null)
         Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Text('${res['note']}')),
+      if (r.isError && '${r.error}'.contains('login'))
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: FilledButton.icon(
+            onPressed: () => context.push('/tools/login_platform', extra: {
+              if (_args['platform'] is String) 'platform': _args['platform'],
+            }),
+            icon: const Icon(Icons.link_rounded),
+            label: const Text('Link the account now'),
+          ),
+        ),
       if (r.runId != null)
         FilledButton.tonalIcon(
           onPressed: () => context.push('/runs/${Uri.encodeComponent(r.runId!)}'),

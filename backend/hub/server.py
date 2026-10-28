@@ -9,6 +9,7 @@ Backends (vendored in ./tools, pinned SHAs in tools.lock):
 Everything real (submitting applications, sending mail) defaults to DRY-RUN.
 """
 import json, os, random, re, sys, threading, time, traceback
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -43,10 +44,14 @@ TOOLS = {
                       headless={"type": "boolean", "default": True,
                                 "description": "Run hidden in the background (default). false = show the browser."})),
     "search_jobs": ("Discover jobs via LinkedIn's PUBLIC job pages (no login) using the ai-job-search CLI; results are filtered "
-                    "by profile title include/exclude (drops Senior/Lead etc.). Read-only, low volume.",
+                    "by profile title include/exclude (drops Senior/Lead etc.). Searching is read-only. save=true stores and scores the "
+                    "matches in the hub; auto_apply=true also applies to the good ones (company form, else a tailored email), "
+                    "DRY-RUN unless dry_run=false and the profile allows live actions.",
                     _s("", query={"type": "string", "description": "e.g. 'devops engineer'; default: profile keywords[0]"},
                        location={"type": "string", "description": "any city or Remote (default: first profile location)"},
-                       days={"type": "integer", "enum": [1, 7, 14, 30]}, limit={"type": "integer", "minimum": 1, "maximum": 30})),
+                       days={"type": "integer", "enum": [1, 7, 14, 30]}, limit={"type": "integer", "minimum": 1, "maximum": 30},
+                       save={"type": "boolean", "default": False}, auto_apply={"type": "boolean", "default": False},
+                       apply_limit={"type": "integer", "minimum": 1, "maximum": 30, "default": 10}, dry_run={"type": "boolean"})),
     "job_detail": ("Full description of a LinkedIn job id/url from search_jobs (for fit check / tailoring).",
                    _s("", id={"type": "string"})),
     "tailor_application": ("Return the ai-job-search workspace + exact workflow files an agent should follow to evaluate fit and "
@@ -58,9 +63,16 @@ TOOLS = {
                           "Posts pass a regex gate, then an LLM (profile llm.provider: kiro with KIRO_API_KEY, ollama, openai) "
                           "extracts company/role/location and checks them against your preferences; profile rules are used "
                           "when no LLM is set. Stores published HR emails as contacts and apply links in data/post_leads.jsonl, "
-                          "optional Telegram alert. Runs in background; poll run_status. Sends nothing.",
+                          "optional Telegram alert. BULK: scrolls every results page until it stops growing (dozens of posts per query, many queries). "
+                          "auto_apply=true also emails the published HR addresses and applies through the posts' company links "
+                          "(DRY-RUN unless dry_run=false and the profile allows live actions). Runs in background; poll run_status.",
                           _s("", queries={"type": "array", "items": {"type": "string"},
-                                          "description": "optional LinkedIn content-search queries; default rotates through keywords x locations"})),
+                                          "description": "optional LinkedIn content-search queries; default rotates through keywords x locations"},
+                             max_posts={"type": "integer", "minimum": 5, "maximum": 300, "default": 80,
+                                        "description": "stop scrolling a query after this many posts"},
+                             scrolls={"type": "integer", "minimum": 3, "maximum": 60, "default": 30},
+                             max_queries={"type": "integer", "minimum": 1, "maximum": 30, "default": 12},
+                             auto_apply={"type": "boolean", "default": False}, dry_run={"type": "boolean"})),
     "career_scan": ("Read open roles from company CAREER PAGES with Firecrawl (find the careers page, extract the jobs, keep "
                     "title-filtered ones) and add them to the job pipeline for scoring + email. Default: known companies not "
                     "scanned yet. Runs in background; poll run_status. Sends nothing.",
@@ -208,25 +220,64 @@ TOOLS = {
                         _s("", platform={"type": "string", "enum": ["linkedin", "naukri", "indeed"]})),
     "scheduler_status": ("Built-in 24/7 scheduler: interval, last and next run for the autopilot and the post scan "
                          "(autopilot.schedule_every_hours / post_scan.schedule_every_hours in the profile).", _s("")),
+    "global_search": ("GLOBAL SEARCH: every profile keyword x location (or your own query) across LinkedIn, Indeed, Naukri and Google Jobs; "
+                      "matches are filtered by your title rules, saved, scored against the resume and ranked. Read the ranked list with "
+                      "search_results(run_id). auto_apply=true then applies to the good ones (company form, else a tailored email to the "
+                      "verified contact) within your caps. Background run.",
+                      _s("", query={"type": "string", "description": "one job title; default: all profile keywords"},
+                         location={"type": "string", "description": "one city or Remote; default: all profile locations"},
+                         sites={"type": "array", "items": {"type": "string", "enum": ["linkedin", "indeed", "naukri", "glassdoor", "google"]}},
+                         hours_old={"type": "integer", "minimum": 1, "maximum": 720, "default": 168},
+                         per_search={"type": "integer", "minimum": 5, "maximum": 50, "default": 20},
+                         auto_apply={"type": "boolean", "default": False},
+                         apply_limit={"type": "integer", "minimum": 1, "maximum": 30, "default": 10},
+                         dry_run={"type": "boolean"})),
+    "search_results": ("Ranked jobs found by a finished global_search run (score, matched skills, status, apply link).",
+                       _s("", run_id={"type": "string"})),
+    "apply_to_jobs": ("Apply to jobs you picked (ids from search_results / list_jobs): fills the company career-page form when the job is on "
+                      "the company site, otherwise finds the verified contact and sends a JD-tailored email with your resume. DRY-RUN unless "
+                      "dry_run=false and the profile allows live actions; daily caps, send window and suppression list always apply. Background run.",
+                      _s("", job_ids={"type": "array", "items": {"type": "integer"}}, dry_run={"type": "boolean"})),
+    "alarm_list": ("Alarms: clock times at which the server runs tasks by itself (find HR emails, send emails, bulk email, LinkedIn "
+                   "apply, Naukri apply, post scan, global search, autopilot), with next and last run.", _s("")),
+    "alarm_set": ("Create or change an alarm (like a phone alarm). time HH:MM 24h server-local; days empty = every day; tasks any of "
+                  "find_emails, send_emails, bulk_email, linkedin_apply, naukri_apply, scan_posts, global_search, autopilot or ['all']. "
+                  "Tasks start together and wait in the run queue (3 at a time). dry_run unset = follow the profile safety setting.",
+                  _s("", id={"type": "string", "description": "omit to create a new alarm"}, label={"type": "string"},
+                     time={"type": "string", "description": "HH:MM"},
+                     days={"type": "array", "items": {"type": "string", "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]}},
+                     tasks={"type": "array", "items": {"type": "string", "enum": ["find_emails", "send_emails", "bulk_email", "linkedin_apply",
+                                                                                 "naukri_apply", "scan_posts", "global_search", "autopilot", "all"]}},
+                     enabled={"type": "boolean"}, dry_run={"type": "boolean"}, auto_apply={"type": "boolean"},
+                     bulk_limit={"type": "integer", "minimum": 1, "maximum": 100})),
+    "alarm_delete": ("Delete an alarm.", _s("", id={"type": "string"})),
+    "alarm_run_now": ("Run an alarm's tasks right now (id), or an ad-hoc list (tasks=[...] or ['all']). Tasks queue 3 at a time.",
+                      _s("", id={"type": "string"}, tasks={"type": "array", "items": {"type": "string"}}, dry_run={"type": "boolean"},
+                         auto_apply={"type": "boolean"}, bulk_limit={"type": "integer", "minimum": 1, "maximum": 100})),
+    "queue_status": ("Run queue: what is running now, what is waiting (FIFO) and the limit (3 runs at once).", _s("")),
 }
 READ = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 READ_NET = dict(READ, openWorldHint=True)
 WRITE = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False}
 ACT = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True}  # applies / sends
 ANNOT = {"hub_status": READ, "list_hr_contacts": READ, "run_status": READ, "tracker_report": READ, "hiring_post_queries": READ,
-         "list_jobs": READ, "compose_email": READ, "generate_linkedin_pitch": READ, "tailor_application": READ, "search_jobs": READ_NET, "job_detail": READ_NET,
+         "list_jobs": READ, "compose_email": READ, "generate_linkedin_pitch": READ, "tailor_application": READ, "search_jobs": dict(WRITE, openWorldHint=True), "job_detail": READ_NET,
          "find_contact": READ_NET, "verify_email": READ_NET, "guard_job_posting": READ, "verify_resume_pdf": READ,
          "find_company_emails": READ_NET, "mailscout_find_emails": READ_NET, "verdict_email_tool": READ_NET, "lead_finder_search": READ_NET, "multi_board_search": READ_NET,
          "login_platform": WRITE, "prepare_linkedin": WRITE, "add_hr_contact": WRITE,
          "find_hr_emails": dict(WRITE, openWorldHint=True), "career_scan": dict(WRITE, openWorldHint=True), "career_apply": ACT, "apply_jobs": ACT, "send_email": ACT, "send_hr_emails": ACT,
          "autopilot_run": ACT, "cancel_run": dict(WRITE, idempotentHint=True), "autopilot_stop": dict(WRITE, idempotentHint=True),
          "suppress_contact": dict(WRITE, idempotentHint=True), "resume_info": READ, "scheduler_status": READ,
-         "resume_to_profile": WRITE, "sync_resume": ACT, "unlink_platform": dict(WRITE, destructiveHint=True)}
+         "resume_to_profile": WRITE, "sync_resume": ACT, "unlink_platform": dict(WRITE, destructiveHint=True),
+         "global_search": dict(WRITE, openWorldHint=True), "search_results": READ, "apply_to_jobs": ACT, "queue_status": READ,
+         "alarm_list": READ, "alarm_set": dict(WRITE, idempotentHint=True), "alarm_delete": dict(WRITE, destructiveHint=True),
+         "alarm_run_now": ACT}
 
 REQUIRED = {"apply_jobs": ["platform"], "run_status": ["run_id"], "send_email": ["to", "subject", "body"],
             "find_hr_emails": ["city"], "login_platform": ["platform"], "add_hr_contact": ["email", "source_url"], "job_detail": ["id"], "tailor_application": ["job_url_or_id"],
             "verify_email": ["email"], "guard_job_posting": ["jd_text"], "cancel_run": ["run_id"], "autopilot_stop": ["on"], "suppress_contact": ["email_or_domain"],
-            "mailscout_find_emails": ["domain"], "unlink_platform": ["platform"]}
+            "mailscout_find_emails": ["domain"], "unlink_platform": ["platform"],
+            "search_results": ["run_id"], "apply_to_jobs": ["job_ids"], "alarm_delete": ["id"]}
 
 
 def tool_list():
@@ -242,19 +293,37 @@ def tool_list():
 
 # ---------------------------------------------------------------- tools
 def _has_session(pl):
+    """True when the saved browser profile holds a signed-in session. An empty profile (Chrome opened, nobody signed in)
+    also has a Cookies file, so LinkedIn and Naukri are judged by their sign-in cookie."""
+    import login_helper
     d = core.ROOT / ".profiles" / pl
-    return d.exists() and any(d.rglob("Cookies"))
+    if not d.exists():
+        return False
+    name = login_helper.SIGNED_IN.get(pl)
+    return login_helper.has_cookie(d, name) if name else any(d.rglob("Cookies"))
 
 
 def login_platform(a):
-    r = core.spawn("login-" + a["platform"], [core.PY, str(core.ROOT / "hub" / "login_helper.py"), a["platform"]],
-                   core.ROOT, {"DISPLAY": os.environ.get("DISPLAY", ":0"), "PLAYWRIGHT_BROWSERS_PATH": str(core.ROOT / ".browsers")}, True, a)
-    vnc = os.environ.get("JOBHUB_REMOTE_BROWSER_URL")
-    r["note"] = (f"A Chrome window opened on the server. Open {vnc} (remote browser), log in there (Google/OTP fine), "
-                 "then close the Chrome window." if vnc else
-                 "A Chrome window opened - log in there (Google sign-in works), then close the window.")
-    if vnc:
-        r["remote_browser_url"] = vnc
+    """Open the sign-in browser on the server. Returns a single-use link (remote_browser_url) that opens it directly."""
+    import browser_access
+    pl = a["platform"]
+    with core.db() as c:
+        recent = [r["id"] for r in c.execute("SELECT id FROM runs WHERE kind=? ORDER BY started DESC LIMIT 3", ("login-" + pl,))]
+    live = next((i for i in recent if core.run_status(i, 1).get("running")), None)
+    if live:  # tapped twice: keep the open window instead of queueing a second one behind it
+        r = {"run_id": live, "reused": True}
+    else:
+        r = core.spawn("login-" + pl, [core.PY, str(core.ROOT / "hub" / "login_helper.py"), pl], core.ROOT,
+                       {"DISPLAY": os.environ.get("DISPLAY", ":0"), "PLAYWRIGHT_BROWSERS_PATH": str(core.ROOT / ".browsers")}, True, a)
+    origin = browser_access.public_origin()
+    if origin:
+        r["remote_browser_url"] = f"{origin}/api/v1/browser/enter?t={browser_access.new_ticket(pl)}"
+        r["note"] = (f"Open the link (valid {browser_access.TICKET_TTL // 60} min, single use) and sign in to {pl}. "
+                     "The window closes by itself once you are signed in; then the account shows as linked.")
+    else:
+        r["note"] = "A Chrome window opened - log in there (Google sign-in works), then close the window."
+    if r.get("queued"):
+        r["note"] = "Another run is using this browser profile; the sign-in window opens when it finishes. " + r["note"]
     return r
 
 
@@ -265,7 +334,8 @@ def hub_status(_):
     return {
         "candidate": p["applicant"]["name"],
         "target_ctc": {"min": p["compensation"].get("min_ctc_inr"), "expected": p["compensation"].get("expected_ctc_inr")},
-        "locations": p["search"]["locations"], "dry_run_default": p["safety"]["dry_run_default"],
+        "locations": p["search"]["locations"], "keywords": (p["search"].get("keywords") or [])[:4],
+        "dry_run_default": p["safety"]["dry_run_default"],
         "real_actions_allowed": ok, "real_actions_blocked_reason": why,
         "missing_profile_fields": core.missing_profile_fields(p),
         "credentials": {
@@ -281,7 +351,8 @@ def hub_status(_):
         "llm": llm.status(p),
         "scheduler": scheduler.status(),
         "send_window": autopilot.send_window_text(autopilot.cfg(p)),
-        "runs": {"running": core.running_runs(), "max_parallel": core.MAX_PARALLEL},
+        "runs": {"running": core.running_runs(), "max_parallel": core.MAX_PARALLEL,
+                 "queued": [q["run_id"] for q in core.queue_state()["queued"]]},
         "login_sessions_saved": {pl: _has_session(pl) for pl in ("naukri", "indeed", "linkedin")},
         "chromium_installed": chrome,
         "autopilot": {"stopped": autopilot.stopped(), "cooldowns": {k: autopilot.platform_blocked(k) for k in
@@ -388,6 +459,7 @@ _bun = autopilot._bun
 
 
 def search_jobs(a):
+    """LinkedIn public job search. save=true stores and scores the matches; auto_apply=true also applies to the good ones."""
     import re
     p = core.load_profile()
     s = p["search"]
@@ -399,9 +471,106 @@ def search_jobs(a):
     res = json.loads(_bun(args)).get("results", [])
     inc, exc = re.compile(s["title_include"], re.I), re.compile(s["title_exclude"], re.I)
     keep = [r for r in res if inc.search(r["title"]) and not exc.search(r["title"])]
-    return {"location": loc, "fetched": len(res), "kept_after_title_filter": len(keep),
-            "jobs": [{k: r[k] for k in ("id", "title", "company", "location", "date", "url")} for r in keep],
-            "note": "Salary is rarely listed; check job_detail."}
+    out = {"location": loc, "fetched": len(res), "kept_after_title_filter": len(keep),
+           "jobs": [{k: r[k] for k in ("id", "title", "company", "location", "date", "url")} for r in keep],
+           "note": "Salary is rarely listed; check job_detail."}
+    if not (a.get("save") or a.get("auto_apply")):
+        return out
+    c = autopilot.cfg(p)
+    saved = 0
+    for r in keep:  # the job text is what scoring and the tailored email are built from
+        try:
+            jd = _bun(["detail", str(r["id"]), "--format", "plain"])[:6000] if saved < int(a.get("detail_limit", 8)) else ""
+        except Exception:  # noqa: BLE001 - a missing description only lowers the score
+            jd = ""
+        if autopilot.save_job({"source": "linkedin", "ext_id": str(r["id"]), "url": r["url"], "title": r["title"],
+                               "company": r.get("company", ""), "location": r.get("location", ""), "posted": r.get("date", ""),
+                               "description": jd, "apply_type": "unknown"}):
+            saved += 1
+    out["scoring"] = autopilot.score_new(p, c)
+    out["saved_to_hub"] = saved
+    with core.db() as db:
+        q = ",".join("?" * len(keep)) or "''"
+        rows = [dict(x) for x in db.execute(
+            f"SELECT id,title,company,score,status,reason,url FROM jobs WHERE url IN ({q}) ORDER BY score DESC", [r["url"] for r in keep])]
+    out["jobs"] = rows
+    if a.get("auto_apply"):
+        good = [r["id"] for r in rows if r["status"] in ("scored", "queued")][: int(a.get("apply_limit", 10))]
+        out["auto_apply"] = apply_to_jobs({"job_ids": good, "dry_run": a.get("dry_run")}) if good else {"note": "no job passed the score threshold"}
+    return out
+
+
+def global_search(a):
+    opts = {k: a[k] for k in ("query", "location", "sites", "hours_old", "per_search", "auto_apply", "apply_limit", "dry_run") if k in a}
+    env = {"PYTHONUNBUFFERED": "1"}
+    r = core.spawn("search-global", [core.PY, str(core.ROOT / "hub" / "globalsearch.py"), json.dumps(opts)], core.ROOT, env, True, opts)
+    r["note"] = ("Searching all boards. Open the results with search_results(run_id) when the run is finished."
+                 + (" The good matches are then applied to (dry-run unless you turned that off)." if a.get("auto_apply") else ""))
+    return r
+
+
+def search_results(a):
+    rid = re.sub(r"[^A-Za-z0-9._-]", "", str(a["run_id"]))
+    f = core.ROOT / "data" / "search_results" / f"{rid}.json"
+    if not f.exists():
+        st = core.run_status(rid, 5)
+        return {"error": "no results yet", "state": st.get("state"), "queued": st.get("queued", False)} if "error" not in st else st
+    out = json.loads(f.read_text())
+    ids = [j["id"] for j in out.get("jobs", [])]
+    if ids:  # statuses move on after the search (emailed / applied / skipped)
+        with core.db() as db:
+            now = {r["id"]: dict(r) for r in db.execute(
+                f"SELECT id,status,reason,contact FROM jobs WHERE id IN ({','.join('?' * len(ids))})", ids)}
+        for j in out["jobs"]:
+            j.update({k: v for k, v in now.get(j["id"], {}).items() if k != "id"})
+    out["run_id"] = rid
+    return out
+
+
+def apply_to_jobs(a):
+    """Apply to chosen jobs: company career-page form, else a tailored email to the verified contact."""
+    ids = [int(x) for x in a.get("job_ids") or []]
+    if not ids:
+        return {"error": "job_ids is empty"}
+    p = core.load_profile()
+    dry = a.get("dry_run")
+    dry = p["safety"]["dry_run_default"] if dry is None else bool(dry)
+    if not dry:
+        ok, why = core.real_actions_allowed(p)
+        if not ok:
+            return {"error": "live applications blocked: " + why, "hint": "run with dry_run=true to preview drafts"}
+        if autopilot.stopped():
+            return {"error": f"kill-switch active ({autopilot.STOP_FILE}); autopilot_stop(on=false) to clear"}
+    opts = {"job_ids": ids, "dry_run": dry, "discover": False, "posts": False, "career": False, "apply": False,
+            "form": True, "email": True}
+    env = {"PYTHONUNBUFFERED": "1", "DISPLAY": os.environ.get("DISPLAY", ":0"),
+           "PLAYWRIGHT_BROWSERS_PATH": str(core.ROOT / ".browsers")}
+    r = core.spawn("autopilot-selected", [core.PY, str(core.ROOT / "hub" / "autopilot.py"), json.dumps(opts)], core.ROOT, env, dry, opts)
+    r["jobs"] = len(ids)
+    r["note"] = ("DRY-RUN: forms are filled and emails drafted, nothing is submitted or sent."
+                 if dry else f"LIVE: applying to {len(ids)} job(s) within your daily caps.")
+    return r
+
+
+def queue_status(_):
+    return core.queue_state()
+
+
+def alarm_list(_):
+    st = scheduler.status()
+    return {"alarms": st["alarms"], "tasks": scheduler.TASKS, "server_time": datetime.now().isoformat(timespec="minutes")}
+
+
+def alarm_set(a):
+    return scheduler.alarm_set(a)
+
+
+def alarm_delete(a):
+    return scheduler.alarm_delete(a)
+
+
+def alarm_run_now(a):
+    return scheduler.alarm_run_now(a)
 
 
 def job_detail(a):
@@ -496,11 +665,26 @@ def find_hr_emails(a):
 
 
 def scan_hiring_posts(a):
+    """Bulk scan of LinkedIn hiring posts. auto_apply=true also emails the published HR addresses and applies through
+    the posts' company links (dry-run unless dry_run=false and the profile allows live actions)."""
+    p = core.load_profile()
     env = {"PYTHONUNBUFFERED": "1", "PLAYWRIGHT_BROWSERS_PATH": str(core.ROOT / ".browsers")}
     if a.get("queries"):
         env["JOBHUB_POST_QUERIES"] = json.dumps(a["queries"])
-    return core.spawn("posts", [core.PY, str(core.ROOT / "hub" / "post_scanner.py")], core.ROOT, env, True,
-                      {"queries": a.get("queries", "default")})
+    opts = {k: a[k] for k in ("max_posts", "scrolls", "max_queries", "auto_apply") if k in a}
+    dry = a.get("dry_run")
+    dry = p["safety"]["dry_run_default"] if dry is None else bool(dry)
+    if a.get("auto_apply") and not dry:
+        ok, why = core.real_actions_allowed(p)
+        if not ok:
+            return {"error": "live auto-apply blocked: " + why, "hint": "run with dry_run=true to preview"}
+    opts["dry_run"] = dry
+    env["JOBHUB_POST_OPTS"] = json.dumps(opts)
+    r = core.spawn("posts", [core.PY, str(core.ROOT / "hub" / "post_scanner.py")], core.ROOT, env, dry,
+                   {"queries": a.get("queries", "default"), **opts})
+    r["note"] = ("Scanning hiring posts in bulk" + (" and applying to matches" + (" (DRY-RUN)" if dry else " (LIVE)")
+                                                      if a.get("auto_apply") else " (nothing is sent)") + ".")
+    return r
 
 
 def career_scan(a):
@@ -636,13 +820,32 @@ def run_status(a):
 
 
 def tracker_report(_):
+    """Everything in one report: today's counters, 7-day trend, jobs by stage, contacts, recent emails and runs."""
+    from datetime import timedelta
+    core.sync_applications()
+    days = [(datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(6, -1, -1)]
     with core.db() as c:
         hr = {r["status"]: r["n"] for r in c.execute("SELECT status, COUNT(*) n FROM hr_contacts GROUP BY status")}
         sent = [dict(r) for r in c.execute("SELECT to_email,subject,sent_at,result FROM emails_sent ORDER BY id DESC LIMIT 10")]
         runs = [dict(r) for r in c.execute("SELECT id,kind,started,dry_run FROM runs ORDER BY started DESC LIMIT 10")]
-    return {"applications_today": core.applied_today(), "emails_sent_today": core.sent_today(), "hr_contacts_by_status": hr,
-            "recent_emails": sent, "recent_runs": runs,
-            "brain_hint": "Write this summary to brain note projects/job-hub-progress (no secrets)."}
+        jobs = {r["status"]: r["n"] for r in c.execute("SELECT status, COUNT(*) n FROM jobs GROUP BY status")}
+        by_src = {r["source"]: r["n"] for r in c.execute("SELECT source, COUNT(*) n FROM jobs GROUP BY source")}
+        apps = {r["platform"]: r["n"] for r in c.execute("SELECT platform, COUNT(*) n FROM applications WHERE status='applied' GROUP BY platform")}
+        mails_by_day = {r["d"]: r["n"] for r in c.execute(
+            "SELECT substr(sent_at,1,10) d, COUNT(*) n FROM emails_sent WHERE result='sent' GROUP BY d")}
+        apps_by_day = {r["d"]: r["n"] for r in c.execute(
+            "SELECT substr(at,1,10) d, COUNT(*) n FROM applications WHERE status='applied' GROUP BY d")}
+        total_sent = c.execute("SELECT COUNT(*) FROM emails_sent WHERE result='sent'").fetchone()[0]
+        failed = c.execute("SELECT COUNT(*) FROM emails_sent WHERE result!='sent'").fetchone()[0]
+        top = [dict(r) for r in c.execute(
+            "SELECT id,title,company,score,status FROM jobs WHERE status IN ('scored','queued') ORDER BY score DESC LIMIT 5")]
+    return {"applications_today": core.applied_today(), "emails_sent_today": core.sent_today(),
+            "totals": {"emails_sent": total_sent, "emails_failed": failed, "applications": sum(apps.values()),
+                       "jobs_found": sum(jobs.values()), "hr_contacts": sum(hr.values())},
+            "applications_by_platform": apps, "jobs_by_status": jobs, "jobs_by_source": by_src,
+            "last_7_days": [{"day": d, "emails": mails_by_day.get(d, 0), "applications": apps_by_day.get(d, 0)} for d in days],
+            "hr_contacts_by_status": hr, "top_waiting_jobs": top, "recent_emails": sent, "recent_runs": runs,
+            "queue": core.queue_state(), "brain_hint": "Write this summary to brain note projects/job-hub-progress (no secrets)."}
 
 
 def autopilot_run(a):

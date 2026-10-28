@@ -1,5 +1,5 @@
 """job-hub core: profile, tracker DB, background runner, Gmail mailer. Stdlib + PyYAML only."""
-import json, os, random, re, smtplib, sqlite3, ssl, subprocess, sys, time, uuid
+import json, os, random, re, smtplib, sqlite3, ssl, subprocess, sys, threading, time, uuid
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from pathlib import Path
@@ -102,6 +102,9 @@ def db() -> sqlite3.Connection:
       key TEXT PRIMARY KEY, value TEXT);
     CREATE TABLE IF NOT EXISTS posts_seen(
       fp TEXT PRIMARY KEY, at TEXT, verdict TEXT);
+    CREATE TABLE IF NOT EXISTS run_queue(
+      n INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE, kind TEXT, argv TEXT, cwd TEXT, env TEXT,
+      dry_run INTEGER, args TEXT, parent TEXT, queued_at TEXT);
     CREATE TABLE IF NOT EXISTS form_attempts(
       id INTEGER PRIMARY KEY, job_id INTEGER, at TEXT, status TEXT, reason TEXT, screenshot TEXT, dry INTEGER DEFAULT 1);
     """)
@@ -217,18 +220,21 @@ def _profile_group(kind: str) -> str:  # kept for callers/tests that expect one 
     return sorted(g)[0] if len(g) == 1 else "+".join(sorted(g))
 
 
-def running_conflict(kind: str) -> str:
-    """Run id of an active run that would collide with `kind`, else ''."""
+def running_conflict(kind: str, exclude: str = "") -> str:
+    """Run id of an active run that would collide with `kind`, else ''. `exclude` is a parent run that is waiting
+    for this one (the autopilot waits for its own platform bots), so it must not count as a conflict."""
     groups = _profile_groups(kind)
     with db() as c:
         rows = c.execute("SELECT id, kind FROM runs ORDER BY started DESC LIMIT 30").fetchall()
     for r in rows:
-        if _profile_groups(r["kind"]) & groups and run_status(r["id"], 1).get("running"):
+        if r["id"] != exclude and _profile_groups(r["kind"]) & groups and run_status(r["id"], 1).get("running"):
             return r["id"]
     return ""
 
 
-MAX_PARALLEL = int(os.environ.get("JOBHUB_MAX_PARALLEL", "4"))
+# At most this many runs execute at once; further runs wait in a FIFO queue and start by themselves.
+MAX_PARALLEL = int(os.environ.get("JOBHUB_MAX_PARALLEL", "3"))
+_SPAWN_LOCK = threading.RLock()
 
 
 def running_runs() -> list:
@@ -243,17 +249,41 @@ SECRET_ENV = {"KIRO_API_KEY", "LLM_API_KEY", "TELEGRAM_BOT_TOKEN", "JOBHUB_API_T
               "JOBHUB_VNC_PASSWORD", "JOBHUB_BROWSER_PASSWORD", "JOBHUB_BROWSER_HASH", "FIRECRAWL_API_KEY"}
 
 
-def spawn(kind: str, argv: list, cwd: Path, env_extra: dict, dry_run: bool, args: dict) -> dict:
-    """Start a background run through hub/launcher.py, which records the child's exit code in <log>.exit.
-    Up to MAX_PARALLEL (default 4) runs at once; runs that share a browser profile never overlap."""
-    busy = running_conflict(kind)
-    if busy:  # two Chromium instances on one profile crash with "ProcessSingleton" and used to trigger false cooldowns
-        return {"error": f"{kind} cannot start: {busy} is still running (wait for it or cancel_run)"}
-    active = running_runs()
-    if len(active) >= MAX_PARALLEL:
-        return {"error": f"{kind} cannot start: {len(active)} runs are still running (limit {MAX_PARALLEL}): "
-                         + ", ".join(active)}
-    rid = f"{kind}-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4]}"
+def clear_stale_browser_locks() -> list:
+    """Remove Chromium Singleton* locks from saved browser profiles that no running browser uses.
+
+    A killed browser, or a redeploy (the container hostname changes while the profile volume persists), leaves a lock
+    that makes Chrome refuse to open the profile ("Failed to create a ProcessSingleton"). That silently broke
+    login_platform and every browser run until the lock was deleted by hand."""
+    base = ROOT / ".profiles"
+    proc = Path("/proc")
+    if not base.is_dir() or not proc.is_dir():
+        return []
+    in_use = set()
+    for f in proc.glob("[0-9]*/cmdline"):
+        try:
+            raw = f.read_bytes().decode(errors="ignore")
+        except OSError:
+            continue
+        in_use.update(m.rstrip("/") for m in re.findall(r"--user-data-dir=([^\0]+)", raw))
+    cleared = []
+    for d in sorted(base.iterdir()):
+        if not d.is_dir() or str(d).rstrip("/") in in_use:
+            continue
+        for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+            f = d / name
+            if os.path.lexists(f):
+                try:
+                    f.unlink()
+                    cleared.append(str(f))
+                except OSError:
+                    pass
+    return cleared
+
+
+def _launch(rid: str, kind: str, argv: list, cwd, env_extra: dict, dry_run: bool, args: dict) -> dict:
+    """Start the process for a run right now (capacity and conflicts were checked by the caller)."""
+    clear_stale_browser_locks()
     log = RUNS / f"{rid}.log"
     env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "DISPLAY", "WAYLAND_DISPLAY",
                                                          "XAUTHORITY", "XDG_RUNTIME_DIR", "LANG",
@@ -262,6 +292,7 @@ def spawn(kind: str, argv: list, cwd: Path, env_extra: dict, dry_run: bool, args
     if kind.startswith(THIRD_PARTY_KINDS):  # vendored upstream bots never get keys, the Gmail password or the API token
         env = {k: v for k, v in env.items() if k not in SECRET_ENV and not k.startswith("JOBHUB_SECRET_")}
     env.update({k: str(v) for k, v in env_extra.items()})
+    env["JOBHUB_RUN_ID"] = rid  # children started by this run (autopilot -> bots) do not conflict with it
     wrapped = [PY, str(ROOT / "hub" / "launcher.py"), str(log) + ".exit"] + list(argv)
     with open(log, "wb") as lf:
         proc = subprocess.Popen(wrapped, cwd=str(cwd), env=env, stdout=lf, stderr=subprocess.STDOUT,
@@ -270,6 +301,81 @@ def spawn(kind: str, argv: list, cwd: Path, env_extra: dict, dry_run: bool, args
         c.execute("INSERT INTO runs VALUES(?,?,?,?,?,?,?)",
                   (rid, kind, json.dumps(args), now_iso(), str(log), proc.pid, int(dry_run)))
     return {"run_id": rid, "pid": proc.pid, "log": str(log), "dry_run": dry_run}
+
+
+def dispatch_queue() -> list:
+    """Start queued runs, oldest first, while there is a free slot. A run that would share a browser profile with a
+    running run (or with an older waiting run) keeps waiting, so a later unrelated run may start before it.
+    Returns the ids started. Safe to call often."""
+    started = []
+    with _SPAWN_LOCK:
+        with db() as c:
+            rows = [dict(r) for r in c.execute("SELECT * FROM run_queue ORDER BY n")]
+        if not rows:
+            return started
+        active = len(running_runs())
+        waiting_groups = set()
+        for r in rows:
+            if active + len(started) >= MAX_PARALLEL:
+                break
+            groups = _profile_groups(r["kind"])
+            if groups & waiting_groups or running_conflict(r["kind"], r["parent"] or ""):
+                waiting_groups |= groups
+                continue
+            with db() as c:
+                c.execute("DELETE FROM run_queue WHERE id=?", (r["id"],))
+            try:
+                _launch(r["id"], r["kind"], json.loads(r["argv"]), r["cwd"], json.loads(r["env"]),
+                        bool(r["dry_run"]), json.loads(r["args"]))
+                started.append(r["id"])
+            except OSError as e:  # could not exec: record a failed run so the caller sees why
+                log = RUNS / f"{r['id']}.log"
+                log.write_text(f"could not start: {e}\n")
+                Path(str(log) + ".exit").write_text("127")
+                with db() as c:
+                    c.execute("INSERT INTO runs VALUES(?,?,?,?,?,?,?)",
+                              (r["id"], r["kind"], r["args"], now_iso(), str(log), 0, r["dry_run"]))
+    return started
+
+
+def queue_position(rid: str) -> int:
+    """1-based place in the waiting queue, 0 when the run is not queued."""
+    with db() as c:
+        rows = [r[0] for r in c.execute("SELECT id FROM run_queue ORDER BY n")]
+    return rows.index(rid) + 1 if rid in rows else 0
+
+
+def queue_state() -> dict:
+    dispatch_queue()
+    with db() as c:
+        waiting = [dict(r) for r in c.execute("SELECT id, kind, queued_at, dry_run FROM run_queue ORDER BY n")]
+        run_ids = [(r["id"], r["kind"]) for r in c.execute("SELECT id, kind FROM runs ORDER BY started DESC LIMIT 50")]
+    running = [{"run_id": i, "kind": k} for i, k in run_ids if run_status(i, 1).get("running")]
+    return {"max_parallel": MAX_PARALLEL, "running": running,
+            "queued": [{"run_id": w["id"], "kind": w["kind"], "position": n + 1, "queued_at": w["queued_at"],
+                        "dry_run": bool(w["dry_run"])} for n, w in enumerate(waiting)]}
+
+
+def spawn(kind: str, argv: list, cwd: Path, env_extra: dict, dry_run: bool, args: dict) -> dict:
+    """Start a background run through hub/launcher.py, which records the child's exit code in <log>.exit.
+    At most MAX_PARALLEL (default 3) runs execute at once and runs that share a browser profile never overlap; any
+    run that cannot start yet is put in a FIFO queue (state "queued") and starts by itself as soon as it can."""
+    rid = f"{kind}-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4]}"
+    with _SPAWN_LOCK:
+        with db() as c:
+            c.execute("INSERT INTO run_queue(id,kind,argv,cwd,env,dry_run,args,parent,queued_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                      (rid, kind, json.dumps([str(x) for x in argv]), str(cwd),
+                       json.dumps({k: str(v) for k, v in env_extra.items()}), int(dry_run), json.dumps(args),
+                       os.environ.get("JOBHUB_RUN_ID", ""), now_iso()))
+        dispatch_queue()
+        pos = queue_position(rid)
+        if not pos:
+            with db() as c:
+                r = c.execute("SELECT pid, log, dry_run FROM runs WHERE id=?", (rid,)).fetchone()
+            return {"run_id": rid, "pid": r["pid"], "log": r["log"], "dry_run": bool(r["dry_run"])}
+    return {"run_id": rid, "queued": True, "position": pos, "dry_run": bool(dry_run),
+            "note": f"Queued (position {pos}): at most {MAX_PARALLEL} runs execute at once"
+                    " and this one starts automatically when a slot and its browser profile are free."}
 
 
 def _alive(pid: int) -> bool:
@@ -286,6 +392,12 @@ def _alive(pid: int) -> bool:
 def run_status(rid: str, tail: int = 40) -> dict:
     with db() as c:
         r = c.execute("SELECT * FROM runs WHERE id=?", (rid,)).fetchone()
+        q = None if r else c.execute("SELECT * FROM run_queue WHERE id=?", (rid,)).fetchone()
+    if q:
+        pos = queue_position(rid)
+        return {"run_id": rid, "kind": q["kind"], "running": False, "queued": True, "position": pos, "state": "queued",
+                "exit_code": None, "dry_run": bool(q["dry_run"]), "started": q["queued_at"],
+                "log_tail": [f"queued (position {pos}); starts when one of the {MAX_PARALLEL} slots and its browser profile are free"]}
     if not r:
         return {"error": f"unknown run_id {rid}"}
     exitf = Path(str(r["log"]) + ".exit")
@@ -306,6 +418,8 @@ def run_status(rid: str, tail: int = 40) -> dict:
 def cancel_run(rid: str) -> dict:
     with db() as c:
         r = c.execute("SELECT * FROM runs WHERE id=?", (rid,)).fetchone()
+        if not r and c.execute("DELETE FROM run_queue WHERE id=?", (rid,)).rowcount:
+            return {"cancelled": True, "queued": True, "run_id": rid}
     if not r:
         return {"error": f"unknown run_id {rid}"}
     if not _alive(r["pid"]):

@@ -55,9 +55,11 @@ jobs:
             --parameters "commands=[
               \"set -eu\",
               \"cd /opt/ajs\",
+              \"OLDC=\$(sha256sum deploy/Caddyfile | cut -d' ' -f1)\",
               \"git fetch --depth 1 origin ${SHA}\",
               \"git checkout --force ${SHA}\",
               \"cd deploy && docker compose up -d --build --remove-orphans\",
+              \"[ \$OLDC = \$(sha256sum Caddyfile | cut -d' ' -f1) ] || docker compose up -d --force-recreate --no-deps caddy\",
               \"docker image prune -f\",
               \"for i in \$(seq 1 30); do docker compose exec -T jobhub curl -fsS http://127.0.0.1:8000/health && exit 0; sleep 5; done; docker compose logs --tail 80 jobhub; exit 1\"
             ]" --query Command.CommandId --output text)

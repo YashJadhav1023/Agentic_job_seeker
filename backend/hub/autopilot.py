@@ -298,7 +298,7 @@ def apply_platform(profile: dict, c: dict, platform: str, dry: bool) -> dict:
     st = {}
     while time.time() < deadline:
         st = core.run_status(r["run_id"], 400)
-        if not st.get("running"):
+        if not st.get("running") and not st.get("queued"):  # a queued bot run starts when a slot frees up
             break
         time.sleep(10)
     text = "\n".join(st.get("log_tail", []))
@@ -309,18 +309,19 @@ def apply_platform(profile: dict, c: dict, platform: str, dry: bool) -> dict:
 
 
 # ---------------------------------------------------------------- company career-page application forms
-def form_phase(profile: dict, c: dict, dry: bool) -> dict:
+def form_phase(profile: dict, c: dict, dry: bool, job_ids: list | None = None) -> dict:
     """Fill (and, when live actions are allowed, submit) the application form of good jobs on company career pages.
     Runs as its own process so a browser crash cannot take the autopilot down. Jobs whose form cannot be completed
     safely stay `scored` and are handled by the email phase."""
     if not c.get("career_apply", True):
         return {"skipped": "autopilot.career_apply is false"}
     import career_apply
-    jobs, why = career_apply.eligible(profile, None, None, dry)
+    jobs, why = career_apply.eligible(profile, job_ids or None, None, dry)
     if not jobs:
         return {"skipped": why}
     try:
-        r = subprocess.run([core.PY, str(core.ROOT / "hub" / "career_apply.py"), json.dumps({"dry": dry, "limit": len(jobs)})],
+        r = subprocess.run([core.PY, str(core.ROOT / "hub" / "career_apply.py"),
+                            json.dumps({"dry": dry, "limit": len(jobs), "job_ids": [j["id"] for j in jobs] if job_ids else None})],
                            capture_output=True, text=True, timeout=45 * 60, cwd=str(core.ROOT))
     except subprocess.TimeoutExpired:
         return {"error": "career form run timed out"}
@@ -453,7 +454,7 @@ def pick_contact(profile: dict, c: dict, job: dict, restricted: bool) -> dict:
     return {}
 
 
-def email_phase(profile: dict, c: dict, dry: bool) -> dict:
+def email_phase(profile: dict, c: dict, dry: bool, job_ids: list | None = None) -> dict:
     h = profile["hr_outreach"]
     out = {"emailed": 0, "dry_drafts": [], "no_contact": 0, "deferred": 0, "skipped_dupe": 0, "lookups": 0}
     live_ok, why = core.real_actions_allowed(profile)
@@ -462,9 +463,15 @@ def email_phase(profile: dict, c: dict, dry: bool) -> dict:
     if not dry:
         out["inbox"] = process_inbox(profile)
     remaining = h["max_emails_per_day"] - core.sent_today()
-    budget = min(c["max_emails_per_run"], remaining if not dry else c["max_emails_per_run"])
+    per_run = max(c["max_emails_per_run"], len(job_ids)) if job_ids else c["max_emails_per_run"]  # picked jobs: daily cap still applies
+    budget = min(per_run, remaining if not dry else per_run)
     with core.db() as db:
-        jobs = [dict(r) for r in db.execute("SELECT * FROM jobs WHERE status IN ('scored','queued') ORDER BY score DESC")]
+        if job_ids:
+            q = ",".join("?" * len(job_ids))
+            jobs = [dict(r) for r in db.execute(
+                f"SELECT * FROM jobs WHERE id IN ({q}) AND status IN ('scored','queued','no_contact','error','skip') ORDER BY score DESC", job_ids)]
+        else:
+            jobs = [dict(r) for r in db.execute("SELECT * FROM jobs WHERE status IN ('scored','queued') ORDER BY score DESC")]
     for j in jobs:
         if out["emailed"] + len(out["dry_drafts"]) >= budget or stopped():
             break
@@ -592,10 +599,16 @@ def run(opts: dict) -> dict:
     summary["synced_contacts"] = sync_existing_job_contacts()
     if opts.get("apply", True) and not stopped():
         summary["platform_apply"] = [apply_platform(p, c, pl, dry) for pl in platforms]
+    job_ids = [int(x) for x in opts.get("job_ids") or []]
+    if job_ids:  # the user picked these jobs: give them another chance even if an earlier run skipped them
+        with core.db() as db:
+            q = ",".join("?" * len(job_ids))
+            db.execute(f"UPDATE jobs SET status='scored', reason='picked by user' "
+                       f"WHERE id IN ({q}) AND status IN ('skip','no_contact','error','new')", job_ids)
     if opts.get("form", True) and not stopped():
-        summary["career_apply"] = form_phase(p, c, dry)
+        summary["career_apply"] = form_phase(p, c, dry, job_ids or None)
     if opts.get("email", True) and not stopped():
-        summary["email"] = email_phase(p, c, dry)
+        summary["email"] = email_phase(p, c, dry, job_ids or None)
     return summary
 
 

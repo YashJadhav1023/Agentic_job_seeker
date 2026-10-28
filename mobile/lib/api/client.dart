@@ -118,6 +118,17 @@ class ApiClient {
   Future<Map<String, dynamic>> resumeInfo() async =>
       (await _send(() => _http.get(_u('/api/v1/resume'), headers: _headers))) as Map<String, dynamic>;
 
+  /// Run queue: what is running, what waits (FIFO) and the limit.
+  Future<Map<String, dynamic>> queue() async =>
+      (await _send(() => _http.get(_u('/api/v1/queue'), headers: _headers))) as Map<String, dynamic>;
+
+  /// Starts the sign-in browser for [platform] on the server and returns a single-use link that opens it directly
+  /// (no basic-auth or VNC password prompt).
+  Future<Map<String, dynamic>> browserSession(String platform) async => (await _send(() => _http.post(
+      _u('/api/v1/browser/session'),
+      headers: {..._headers, 'Content-Type': 'application/json'},
+      body: jsonEncode({'platform': platform})))) as Map<String, dynamic>;
+
   Future<Map<String, dynamic>> accounts() async =>
       (await _send(() => _http.get(_u('/api/v1/accounts'), headers: _headers))) as Map<String, dynamic>;
 

@@ -33,7 +33,8 @@ ASKS_EMAIL = re.compile(
 EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}")
 SKIP_LINK = re.compile(r"linkedin\.com/(in|company|feed/hashtag|search|school|showcase|groups)|lnkd\.in/?$|^mailto:", re.I)
 PERSONAL = ("gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "rediffmail.com", "icloud.com", "proton.me")
-DEFAULTS = {"max_queries": 12, "scrolls": 5, "include_feed": False, "feed_scrolls": 8, "date_posted": "past-week",
+DEFAULTS = {"max_queries": 12, "scrolls": 30, "max_posts_per_query": 80, "include_feed": False, "feed_scrolls": 12,
+            "date_posted": "past-week",
             "extra_queries": [], "companies": ["all"], "alert_telegram": True}
 
 
@@ -116,17 +117,33 @@ EXPAND_JS = """() => { for (const b of document.querySelectorAll('button, span[r
     if (/^(…\\s*)?(see )?more$/i.test(b.innerText.trim())) b.click(); }"""
 
 
-async def _collect(page, url: str, scrolls: int, label: str) -> list:
+COUNT_JS = "() => [...document.querySelectorAll('h2')].filter(h => h.innerText.trim() === 'Feed post').length"
+# LinkedIn renders results inside an inner scroller and loads 3-4 more posts each time the LAST post is scrolled into
+# view; wheel events over the window stop working after the first batch (that is why a scan used to see 2-12 posts).
+SCROLL_JS = """() => { const hs = [...document.querySelectorAll('h2')].filter(h => h.innerText.trim() === 'Feed post');
+  if (hs.length) hs[hs.length - 1].scrollIntoView({block: 'end'}); window.scrollBy(0, 3000); }"""
+
+
+async def _collect(page, url: str, scrolls: int, label: str, max_posts: int = 80) -> list:
     await page.goto(url, wait_until="domcontentloaded", timeout=60000)
     await page.wait_for_timeout(7000)
     if any(x in page.url for x in ("login", "authwall", "checkpoint")):
         raise PermissionError("LinkedIn session expired - run login_platform('linkedin')")
-    for _ in range(scrolls):
-        await page.mouse.wheel(0, 2500)
-        await page.wait_for_timeout(1300)
+    last, stale = 0, 0
+    for _ in range(max(1, scrolls)):
+        n = await page.evaluate(COUNT_JS)
+        if n >= max_posts:
+            break
+        stale = stale + 1 if n == last else 0
+        if stale >= 4:  # nothing new after four more scrolls: the results are exhausted
+            break
+        last = n
+        await page.evaluate(SCROLL_JS)
+        await page.keyboard.press("End")
+        await page.wait_for_timeout(1800)
     await page.evaluate(EXPAND_JS)
     await page.wait_for_timeout(1200)
-    posts = await page.evaluate(EXTRACT_JS)
+    posts = (await page.evaluate(EXTRACT_JS))[:max_posts]
     for x in posts:
         x["source"] = label
     return posts
@@ -150,7 +167,7 @@ async def scan(queries, sc: dict | None = None):
                      + f"&datePosted=%22{sc['date_posted']}%22&sortBy=%22date_posted%22", sc["scrolls"]) for q in queries]
         for label, url, scrolls in targets:
             try:
-                posts = await _collect(page, url, scrolls, label)
+                posts = await _collect(page, url, scrolls, label, int(sc.get("max_posts_per_query", 80)))
             except PermissionError as e:
                 print(str(e), flush=True)
                 break
@@ -171,6 +188,9 @@ async def scan(queries, sc: dict | None = None):
     return process(p, raw, sc)
 
 
+LAST_LEADS: list = []  # leads found by the latest process() call (read by auto_apply)
+
+
 def process(p: dict, posts: list, sc: dict) -> dict:
     """Analyse collected posts and store contacts / leads. Separate from the browser part so it is testable."""
     lead_file = core.ROOT / "data" / "post_leads.jsonl"
@@ -178,6 +198,7 @@ def process(p: dict, posts: list, sc: dict) -> dict:
     verdicts = post_analyzer.analyze(p, [x["text"] for x in posts], log=lambda m: print(m, flush=True))
     kept = stored = alerts = 0
     leads = []
+    LAST_LEADS.clear()
     me = p["applicant"]["email"].lower()
     for post, v in zip(posts, verdicts):
         mark_seen(post.get("fp") or fingerprint(post["text"]), ("match " if v["match"] else "skip ") + v["reason"])
@@ -217,6 +238,7 @@ def process(p: dict, posts: list, sc: dict) -> dict:
                     "links": ext[:5], "emails": sorted(mails), "query": post.get("source", ""), "via": v["via"],
                     "reason": v["reason"], "found_at": core.now_iso(), "excerpt": post["text"][:400]}
             leads.append(lead)
+            LAST_LEADS.append(lead)
             with open(lead_file, "a") as f:
                 f.write(json.dumps(lead, ensure_ascii=False) + "\n")
         if sc.get("alert_telegram", True) and notify.post_alert(p, {**v, "role": role}, post.get("author", ""),
@@ -237,11 +259,47 @@ def default_queries(p: dict) -> list:
     return list(dict.fromkeys(list(sc.get("extra_queries") or []) + qs))
 
 
-def queries_for_run(p: dict) -> list:
-    return core.rotate("post_queries", default_queries(p), int(scan_cfg(p)["max_queries"]))
+def queries_for_run(p: dict, sc: dict | None = None) -> list:
+    return core.rotate("post_queries", default_queries(p), int((sc or scan_cfg(p))["max_queries"]))
+
+
+def auto_apply(p: dict, leads: list, dry: bool, log=print) -> dict:
+    """Act on what the scan found: email the HR addresses the posts published, and apply through their company links."""
+    import autopilot
+    import server  # lazy: server imports the other hub modules
+    out = {"dry_run": dry}
+    ids = []
+    for lead in leads:
+        link = next((l for l in lead.get("links", []) if l.startswith("http")), "")
+        if not link:
+            continue
+        autopilot.save_job({"source": "post", "ext_id": "", "url": link, "title": lead.get("role") or "Hiring post",
+                            "company": lead.get("company", ""), "location": lead.get("location", ""),
+                            "posted": lead.get("found_at", ""), "description": lead.get("excerpt", ""), "apply_type": "external"})
+        with core.db() as c:
+            row = c.execute("SELECT id, status FROM jobs WHERE url=?", (link,)).fetchone()
+            if row and row["status"] in ("new", "skip", "no_contact"):
+                c.execute("UPDATE jobs SET status='scored', score=MAX(COALESCE(score,0),70), reason='matched a hiring post' WHERE id=?",
+                          (row["id"],))
+        if row:
+            ids.append(row["id"])
+    if ids:
+        out["jobs"] = server.apply_to_jobs({"job_ids": ids[:10], "dry_run": dry})
+        log(f"[auto-apply] {len(ids)} post links -> {out['jobs'].get('run_id') or out['jobs'].get('error')}")
+    if any(l.get("emails") for l in leads):
+        out["emails"] = server.send_hr_emails({"dry_run": dry, "limit": 10})
+        log(f"[auto-apply] HR emails: {json.dumps(out['emails'], default=str)[:300]}")
+    return out
 
 
 if __name__ == "__main__":
     prof = core.load_profile()
-    qs = json.loads(os.environ["JOBHUB_POST_QUERIES"]) if os.getenv("JOBHUB_POST_QUERIES") else queries_for_run(prof)
-    asyncio.run(scan(qs))
+    opts = json.loads(os.environ.get("JOBHUB_POST_OPTS") or "{}")
+    cfg = scan_cfg(prof)
+    for src, dst in (("max_posts", "max_posts_per_query"), ("scrolls", "scrolls"), ("max_queries", "max_queries")):
+        if opts.get(src):
+            cfg[dst] = int(opts[src])
+    qs = json.loads(os.environ["JOBHUB_POST_QUERIES"]) if os.getenv("JOBHUB_POST_QUERIES") else queries_for_run(prof, cfg)
+    summary = asyncio.run(scan(qs, cfg))
+    if opts.get("auto_apply"):
+        print("AUTO-APPLY " + json.dumps(auto_apply(prof, list(LAST_LEADS), bool(opts.get("dry_run", True))), default=str), flush=True)

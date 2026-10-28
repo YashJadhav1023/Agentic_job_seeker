@@ -5,7 +5,9 @@ Every tool in server.TOOLS is exposed automatically, so the app, the stdio MCP s
   GET  /health                       liveness (no auth)
   GET  /api/v1/tools                 tool catalogue with JSON schemas (the app renders forms from these)
   POST /api/v1/tools/{name}          run a tool; body = tool arguments
-  GET  /api/v1/runs                  recent background runs
+  GET  /api/v1/runs                  recent background runs (queued ones first)
+  GET  /api/v1/queue                 run queue: running now, waiting in FIFO order, limit
+  POST /api/v1/browser/session       one-tap remote browser for linking LinkedIn / Naukri / Indeed (returns a single-use URL)
   GET  /api/v1/runs/{run_id}         run status + log tail
   GET/PUT /api/v1/profile            read / replace profile.yaml (validated)
   GET/POST /api/v1/resume            which resume is live / upload the PDF used for search, scoring, emails and applying
@@ -36,8 +38,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import yaml  # noqa: E402
 from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile  # noqa: E402
 from fastapi.concurrency import run_in_threadpool  # noqa: E402
-from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response  # noqa: E402
 
+import browser_access  # noqa: E402
 import core  # noqa: E402
 import keys  # noqa: E402
 import resume  # noqa: E402
@@ -158,9 +161,51 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/runs", dependencies=auth)
     def runs(limit: int = 30):
         limit = max(1, min(limit, 200))
+        core.dispatch_queue()
         with core.db() as c:
-            ids = [r["id"] for r in c.execute("SELECT id FROM runs ORDER BY started DESC LIMIT ?", (limit,))]
+            ids = [r["id"] for r in c.execute("SELECT id FROM run_queue ORDER BY n")]  # waiting runs first
+            ids += [r["id"] for r in c.execute("SELECT id FROM runs ORDER BY started DESC LIMIT ?", (limit,))]
         return {"runs": [{k: v for k, v in core.run_status(i, 3).items()} for i in ids]}
+    @app.get("/api/v1/queue", dependencies=auth)
+    def queue():
+        return core.queue_state()
+
+    @app.post("/api/v1/browser/session", dependencies=auth)
+    async def browser_session(req: Request, body: dict = Body(default_factory=dict)):
+        """Start the sign-in browser for a platform and return a single-use link that opens it directly: no basic-auth
+        prompt and no VNC password prompt. The link sets a 30-minute cookie that Caddy checks for /browser/*."""
+        platform = str(body.get("platform", ""))
+        if platform not in ("linkedin", "naukri", "indeed"):
+            raise HTTPException(422, "platform must be linkedin, naukri or indeed")
+        res = await run_in_threadpool(run_tool, "login_platform", {"platform": platform})
+        if res["is_error"]:
+            raise HTTPException(409, str(res["result"].get("error")))
+        base = str(req.base_url).rstrip("/")
+        return {"platform": platform, "run_id": res["result"].get("run_id"), "queued": bool(res["result"].get("queued")),
+                "url": f"{base}/api/v1/browser/enter?t={browser_access.new_ticket(platform)}", "expires_in": browser_access.TICKET_TTL,
+                "note": f"Sign in to {platform} in the browser that opens. The window closes by itself once you are signed in."}
+
+    @app.get("/api/v1/browser/enter")
+    def browser_enter(req: Request, t: str = ""):
+        ip = _client_ip(req)
+        lockout.check(ip)
+        if browser_access.use_ticket(t) is None:
+            lockout.fail(ip)
+            raise HTTPException(401, "link expired or already used - open it again from the app")
+        r = RedirectResponse(browser_access.vnc_url(os.environ.get("JOBHUB_VNC_PASSWORD", "")), status_code=303)
+        r.set_cookie(browser_access.COOKIE, browser_access.cookie_value(), max_age=browser_access.COOKIE_TTL, path="/browser",
+                     httponly=True, secure=True, samesite="lax")
+        r.headers["Referrer-Policy"] = "no-referrer"
+        r.headers["Cache-Control"] = "no-store"
+        return r
+
+    @app.get("/internal/browser-auth")
+    def browser_auth(req: Request):
+        """Called by Caddy (forward_auth) before it serves /browser/*: 204 only with a valid ticket cookie."""
+        if browser_access.cookie_ok(req.cookies.get(browser_access.COOKIE, "")):
+            return Response(status_code=204)
+        raise HTTPException(401, "remote browser access needs a link from the app")
+
 
     @app.get("/api/v1/runs/{run_id}", dependencies=auth)
     def run(run_id: str, tail: int = 80):

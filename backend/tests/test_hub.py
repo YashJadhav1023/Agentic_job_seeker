@@ -57,7 +57,7 @@ def test_compose_uses_resume_facts_and_jd_subject(profile):
 
 def test_compose_default_subject_and_no_ref_false_positive(profile):
     m = composer.compose(profile, {"title": "Cloud Engineer", "company": "Beta", "description": "preferred candidates know AWS, Terraform"})
-    assert m["subject"].startswith("Application for Cloud Engineer - Yash Jadhav") and "[" not in m["subject"]
+    assert m["subject"].startswith(f"Application for Cloud Engineer - {profile['applicant']['name']}") and "[" not in m["subject"]
 
 
 def test_polish_guard_rejects_invented_facts():
@@ -145,15 +145,26 @@ def test_compose_linkedin_pitch(profile):
     import server
     pitch = composer.compose_linkedin_pitch(profile, JD, "Junior DevOps Engineer", "Acme Corp", "Priya")
     assert len(pitch) <= 300
-    assert "Priya" in pitch
-    assert "Setoo" in pitch
-    assert "AKS" in pitch
-    assert "Terraform" in pitch
-    assert "immediately" in pitch
+    assert "Priya" in pitch and "Acme Corp" in pitch
+    co = ((profile.get("experience") or {}).get("current_company") or "").split()
+    if co:
+        assert co[0] in pitch  # identity comes from the profile, never hardcoded
+    if profile["compensation"].get("notice_period_days") == 0:
+        assert "immediately" in pitch
 
     res = server.generate_linkedin_pitch({"title": "DevOps Engineer", "company": "Acme", "jd_text": JD})
-    assert "pitch" in res and res["length"] <= 300
-    assert "Setoo" in res["pitch"]
+    assert "pitch" in res and res["length"] <= 300 and res["candidate"] == profile["applicant"]["name"]
+
+
+def test_pitch_and_email_are_generic_for_any_profile():
+    """A profile for a different person / profession produces text about that person only."""
+    p = {"applicant": {"name": "Asha Rao", "email": "asha@example.org", "phone": "+15550100", "current_location": "Berlin",
+                       "resume_path": "/nonexistent.pdf", "headline": "Data Analyst", "willing_to_relocate": "No"},
+         "experience": {"current_company": "Globex", "current_title": "Data Analyst"},
+         "compensation": {"notice_period_days": 30}, "search": {"keywords": ["Data Analyst"], "skills": ["Power BI", "SQL"]}}
+    pitch = composer.compose_linkedin_pitch(p, "", "BI Analyst", "Initech", "")
+    assert "Data Analyst at Globex" in pitch and "Setoo" not in pitch and "DevOps" not in pitch
+    assert composer.skills_in("We use power  bi and Excel", p) == ["Power BI"]
 
 
 def test_smtp_probe_deliverability_and_caching(monkeypatch):
@@ -232,7 +243,7 @@ def test_verify_resume_pdf(profile):
     assert res.get("valid") is True
     assert res.get("pages") == 1
     assert res.get("chars", 0) > 1000
-    assert "Setoo" in res.get("verified_keywords", [])
+    assert res.get("verified_keywords")
 
 
 def test_company_finder_patterns_and_variants():

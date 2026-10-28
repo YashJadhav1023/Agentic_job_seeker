@@ -13,7 +13,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Virtual display + VNC/noVNC so you can log in to LinkedIn/Naukri/Indeed from your phone's browser.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        xvfb x11vnc novnc websockify fluxbox tini ca-certificates curl git tzdata fonts-liberation \
+        xvfb x11vnc novnc websockify fluxbox tini ca-certificates curl git tzdata fonts-liberation unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Bun runs the ai-job-search LinkedIn public-search CLI (zero runtime deps).
@@ -37,6 +37,12 @@ RUN useradd --create-home --uid 1000 jobhub \
     && chmod 700 /app/.secrets \
     && chown -R jobhub:jobhub /app
 USER jobhub
+
+# Optional: kiro-cli for LLM post analysis (profile llm.provider: kiro + KIRO_API_KEY in deploy/.env).
+# Build with --build-arg INSTALL_KIRO=1 (docker compose: JOBHUB_INSTALL_KIRO=1 in deploy/.env).
+ARG INSTALL_KIRO=0
+ENV PATH=/home/jobhub/.local/bin:$PATH
+RUN if [ "$INSTALL_KIRO" = "1" ]; then curl -fsSL https://cli.kiro.dev/install | bash && kiro-cli --version; fi
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

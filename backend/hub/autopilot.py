@@ -31,9 +31,11 @@ LOC_MAP = {"pune": "Pune, Maharashtra, India", "mumbai": "Mumbai, Maharashtra, I
 RESTRICT_RX = re.compile(r"restrict|unusual activity|security verification|captcha|verify (?:it'?s )?you|temporarily (?:paused|blocked)|"
                          r"too many requests|\b429\b|daily limit|easy apply limit|access denied|account.{0,20}(?:suspend|limit)|"
                          r"session (?:has )?expired|log ?in required|please log ?in", re.I)
-DEFAULTS = {"min_score": 45, "max_discover": 30, "per_query": 8, "max_emails_per_run": 8, "send_window": [9, 19],
-            "apply_limits": {"naukri": 10, "linkedin": 5}, "platform_cooldown_hours": 24,
+DEFAULTS = {"min_score": 45, "max_discover": 30, "per_query": 8, "max_emails_per_run": 8, "send_window": None, "send_days": None,
+            "apply_limits": {"naukri": 10, "linkedin": 5}, "platform_cooldown_hours": 24, "job_age_days": 7,
+            "max_search_queries": 6, "scan_posts": False, "use_jobspy": False, "jobspy_sites": [], "schedule_every_hours": 0,
             "company_blocklist": ["jobgether"], "max_years_tolerance": 1, "polish_model": "", "max_lookups": 15}
+DAY_NAMES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 
 def cfg(profile: dict) -> dict:
@@ -129,43 +131,57 @@ def title_ok(profile: dict, title: str) -> bool:
     return bool(re.search(s["title_include"], title, re.I)) and not re.search(s["title_exclude"], title, re.I)
 
 
+def search_pairs(profile: dict, c: dict, name: str) -> list:
+    """This run's [keyword, location] pairs: every combination of search.keywords x search.locations, rotated so
+    successive runs cover all of them while each run issues at most autopilot.max_search_queries searches."""
+    s = profile["search"]
+    kws = [k for k in s.get("keywords") or [] if k]
+    locs = [l for l in s.get("locations") or [] if l and str(l).lower() != "all"] or [""]
+    return core.rotate(name, [[k, l] for k in kws for l in locs], int(c.get("max_search_queries", 6)))
+
+
+def linkedin_location(loc: str) -> str:
+    """Full LinkedIn location for known Indian cities; any other value is passed through (LinkedIn resolves free text)."""
+    return LOC_MAP.get(loc.strip().lower(), loc.strip())
+
+
 def discover_linkedin(profile: dict, c: dict, budget: int) -> int:
     if platform_blocked("linkedin_search"):
         log("linkedin discovery on cooldown, skipped")
         return 0
-    s, new, seen = profile["search"], 0, known_urls()
-    locs = [LOC_MAP[l.lower()] for l in s["locations"] if l.lower() in LOC_MAP][:3]
-    for kw in s["keywords"][:3]:
-        for loc in locs:
-            if new >= budget or stopped():
+    new, seen = 0, known_urls()
+    for kw, raw_loc in search_pairs(profile, c, "linkedin_pairs"):
+        loc = linkedin_location(raw_loc) if raw_loc else "Remote"
+        if new >= budget or stopped():
+            return new
+        try:
+            age = next((d for d in (1, 7, 14, 30) if int(c["job_age_days"]) <= d), 30)
+            res = json.loads(_bun(["search", "-q", kw, "-l", loc, "--limit", str(c["per_query"]), "--jobage", str(age),
+                                   "--format", "json"])).get("results", [])
+        except Exception as e:  # noqa: BLE001
+            if restriction_in(str(e)):
+                block_platform("linkedin_search", 1, str(e))
                 return new
-            try:
-                res = json.loads(_bun(["search", "-q", kw, "-l", loc, "--limit", str(c["per_query"]), "--jobage", "7",
-                                       "--format", "json"])).get("results", [])
-            except Exception as e:  # noqa: BLE001
-                if restriction_in(str(e)):
-                    block_platform("linkedin_search", 1, str(e))
-                    return new
-                log(f"linkedin search failed ({kw}/{loc}): {str(e)[:100]}")
+            log(f"linkedin search failed ({kw}/{loc}): {str(e)[:100]}")
+            continue
+        for r in res:
+            url = r["url"].split("?")[0]
+            if new >= budget or url in seen or not title_ok(profile, r["title"]):
                 continue
-            for r in res:
-                url = r["url"].split("?")[0]
-                if new >= budget or url in seen or not title_ok(profile, r["title"]):
-                    continue
-                try:
-                    time.sleep(random.uniform(3, 6))
-                    d = json.loads(_bun(["detail", r["id"], "--format", "json"]))
-                except Exception as e:  # noqa: BLE001
-                    log(f"linkedin detail failed {r['id']}: {str(e)[:80]}")
-                    continue
-                if save_job({"source": "linkedin", "ext_id": r["id"], "url": url, "title": r["title"], "company": r["company"],
-                             "location": r.get("location", ""), "posted": r.get("date", ""),
-                             "description": d.get("description", ""), "apply_type": "unknown"}):
-                    new += 1
-                    seen.add(url)
-                    if re.search(r"mid-senior|director|executive", d.get("seniority") or "", re.I):
-                        set_job(_job_id(url), status="skip", reason=f"seniority: {d.get('seniority')}")
-            time.sleep(4)
+            try:
+                time.sleep(random.uniform(3, 6))
+                d = json.loads(_bun(["detail", r["id"], "--format", "json"]))
+            except Exception as e:  # noqa: BLE001
+                log(f"linkedin detail failed {r['id']}: {str(e)[:80]}")
+                continue
+            if save_job({"source": "linkedin", "ext_id": r["id"], "url": url, "title": r["title"], "company": r["company"],
+                         "location": r.get("location", ""), "posted": r.get("date", ""),
+                         "description": d.get("description", ""), "apply_type": "unknown"}):
+                new += 1
+                seen.add(url)
+                if re.search(r"mid-senior|director|executive", d.get("seniority") or "", re.I):
+                    set_job(_job_id(url), status="skip", reason=f"seniority: {d.get('seniority')}")
+        time.sleep(4)
     return new
 
 
@@ -174,9 +190,11 @@ def discover_naukri(profile: dict, c: dict, budget: int) -> int:
         log("naukri discovery on cooldown, skipped")
         return 0
     s = profile["search"]
-    queries = [[kw, loc] for kw in s["keywords"][:3] for loc in s["locations"][:3]]
+    queries = [[kw, loc or "india"] for kw, loc in search_pairs(profile, c, "naukri_pairs")]
+    nums = re.findall(r"\d+", str(profile["applicant"].get("experience_years", "0")))
     params = {"queries": queries, "per_query": c["per_query"], "max_total": budget, "skip_urls": sorted(known_urls()),
-              "include": s["title_include"], "exclude": s["title_exclude"]}
+              "include": s["title_include"], "exclude": s["title_exclude"], "age": int(c["job_age_days"]),
+              "experience": int(nums[0]) if nums else 0}
     try:
         r = subprocess.run([core.PY, str(core.ROOT / "hub" / "naukri_discover.py"), json.dumps(params)], capture_output=True,
                            text=True, timeout=1500, env={"PATH": "/usr/bin:/bin", "HOME": str(Path.home()),
@@ -198,6 +216,25 @@ def discover_naukri(profile: dict, c: dict, budget: int) -> int:
     return new
 
 
+def discover_jobspy(profile: dict, c: dict, budget: int) -> int:
+    """No-login boards via JobSpy (LinkedIn guest API, Naukri, Indeed). Optional: autopilot.use_jobspy: true."""
+    import jobspy_tool
+    sites = c.get("jobspy_sites") or ["linkedin", "naukri", "indeed"]
+    new = 0
+    for kw, loc in search_pairs(profile, c, "jobspy_pairs"):
+        if new >= budget or stopped():
+            break
+        r = jobspy_tool.multi_board_search({"query": kw, "location": loc or "India", "sites": sites, "save": True,
+                                            "limit": c["per_query"], "hours_old": 24 * int(c["job_age_days"]),
+                                            "fetch_description": True})
+        if r.get("error"):
+            log(f"jobspy {kw}/{loc}: {r['error'][:120]}")
+            continue
+        new += r.get("saved_to_hub", 0)
+    log(f"jobspy: {new} new jobs")
+    return new
+
+
 # ---------------------------------------------------------------- scoring
 def max_years(profile: dict, c: dict) -> int:
     nums = re.findall(r"\d+", str(profile["search"].get("experience_years_filter", "0-2")))
@@ -211,14 +248,15 @@ def score_job(profile: dict, c: dict, rp: dict, job: dict) -> tuple:
         return 0, [], "title filter"
     if any(b.lower() in (job.get("company") or "").lower() for b in c["company_blocklist"]):
         return 0, [], "company blocklist"
-    parsed = composer.parse_jd(title, job.get("company", ""), jd)
+    parsed = composer.parse_jd(title, job.get("company", ""), jd, profile)
     if parsed["min_years"] and parsed["min_years"] > max_years(profile, c):
         return 0, [], f"needs {parsed['min_years']}+ years"
-    jd_skills = parsed["skills"] or composer.skills_in(title)
+    jd_skills = parsed["skills"] or composer.skills_in(title, profile)
     matched = [k for k in jd_skills if k in rp["skills"]]
     total = sum(composer.SKILL_WEIGHT.get(k, 1) for k in jd_skills) or 1
     overlap = sum(composer.SKILL_WEIGHT.get(k, 1) for k in matched) / total
-    score = 60 * overlap + (20 if re.search(r"devops|cloud|sre|kubernetes|platform", title, re.I) else 8)
+    kws = [k for k in profile["search"].get("keywords") or [] if k]
+    score = 60 * overlap + (20 if any(k.lower() in title.lower() for k in kws) else 12)
     if any(l.lower() in (job.get("location") or "").lower() for l in profile["search"]["locations"]):
         score += 10
     if len(jd) > 200:
@@ -323,9 +361,44 @@ def process_inbox(profile: dict) -> dict:
 
 
 # ---------------------------------------------------------------- email phase
-def in_send_window(c: dict) -> bool:
-    lo, hi = c["send_window"]
-    return lo <= datetime.now().hour < hi and datetime.now().weekday() < 6
+def _window_hours(c: dict):
+    w = c.get("send_window")
+    if w in (None, "", "always", "any", [], False) or not isinstance(w, (list, tuple)) or len(w) != 2:
+        return None
+    lo, hi = int(w[0]) % 24, int(w[1])
+    return None if (lo == 0 and hi >= 24) or lo == hi % 24 else (lo, hi % 24 if hi != 24 else 24)
+
+
+def _window_days(c: dict):
+    d = c.get("send_days")
+    if not d:
+        return None
+    out = set()
+    for x in d:
+        s = str(x).strip().lower()[:3]
+        out.add(int(s) % 7 if s.isdigit() else DAY_NAMES.index(s) if s in DAY_NAMES else -1)
+    out.discard(-1)
+    return out if out and len(out) < 7 else None
+
+
+def in_send_window(c: dict, now: datetime | None = None) -> bool:
+    """Default: always. Optional autopilot.send_window [start_hour, end_hour] (end exclusive, may wrap past midnight,
+    e.g. [22, 6]) and autopilot.send_days (e.g. [mon, tue, wed, thu, fri] or 0-6, Monday = 0)."""
+    now = now or datetime.now()
+    hours, days = _window_hours(c), _window_days(c)
+    if days is not None and now.weekday() not in days:
+        return False
+    if hours is None:
+        return True
+    lo, hi = hours
+    return lo <= now.hour < hi if lo < hi else (now.hour >= lo or now.hour < hi)
+
+
+def send_window_text(c: dict) -> str:
+    hours, days = _window_hours(c), _window_days(c)
+    h = "any time" if hours is None else f"{hours[0]:02d}:00-{hours[1]:02d}:00"
+    d = "every day" if days is None else ",".join(DAY_NAMES[i] for i in sorted(days))
+    return f"{h}, {d} (autopilot.send_window / send_days in the profile)"
 
 
 def domain_recently_emailed(domain: str, days: int) -> bool:
@@ -473,7 +546,16 @@ def run(opts: dict) -> dict:
             found["linkedin"] = discover_linkedin(p, c, budget)
         if "naukri" in platforms and not stopped():
             found["naukri"] = discover_naukri(p, c, budget)
+        if c.get("use_jobspy") and not stopped():
+            found["jobspy"] = discover_jobspy(p, c, budget)
         summary["discovered"] = found
+    if opts.get("posts", c.get("scan_posts")) and not stopped() and (core.ROOT / ".profiles" / "linkedin").exists():
+        import asyncio
+        import post_scanner  # lazy: needs Playwright
+        try:
+            summary["posts"] = asyncio.run(post_scanner.scan(post_scanner.queries_for_run(p)))
+        except Exception as e:  # noqa: BLE001 - a post-scan failure must not stop the rest of the run
+            summary["posts"] = {"error": f"{type(e).__name__}: {str(e)[:150]}"}
     if opts.get("career", True) and not stopped():
         import career_scan  # lazy: career_scan imports this module
         if career_scan.api_key():

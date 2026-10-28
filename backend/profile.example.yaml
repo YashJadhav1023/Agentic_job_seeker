@@ -1,49 +1,48 @@
-# Agentic Job Seeker profile: single source of truth. Copy to data/profile.yaml and edit.
-# Secrets do NOT go here. They live in ./.secrets/ (0600).
+# Agentic Job Seeker profile: single source of truth. The app edits this file (Settings -> Profile).
+# Secrets do NOT go here. They live in ./.secrets/ (0600) or the server .env and are set from the app.
+# Quick start: upload your resume in the app. Contact fields still at these placeholders and search.skills are
+# filled from it automatically; set search.auto_from_resume: true to also let it pick the job titles to search.
 
 applicant:
   name: Your Name
   email: you@example.com
   phone: "+91XXXXXXXXXX"
   current_location: Pune
+  location: {city: Pune, state: Maharashtra, country: India}   # used to fill application forms
   linkedin: https://linkedin.com/in/your-handle
   github: https://github.com/your-handle
-  resume_path: /app/data/resume.pdf     # upload via the app (Settings -> Resume) or scp
-  headline: DevOps & Multi-Cloud Engineer (Azure, AWS, Kubernetes)
-  education: B.Tech Computer Science, Your College (2022-2025)
-  experience_years: "0"          # user 2026-10-23: keep total experience under 1 year (Naukri shows 0 yr 11 months)
+  resume_path: /app/data/resume.pdf     # uploaded from the app (Settings -> Resume); always the latest upload
+  headline: DevOps & Cloud Engineer
+  experience_years: "1"
   willing_to_relocate: "Yes"
+  education: {highest_level: "Bachelor's", degree: "B.Tech Computer Science", university: "Your College", graduation_year: "2025", gpa: ""}
+  cover_note: ""                        # optional short note for application forms; empty = built from this profile
 
 experience:
-  # Used verbatim in outgoing text.
   current_company: Your Company
-  current_title: DevOps Engineer / Intern
-  role_label: DevOps & Multi-Cloud Engineer
+  current_title: DevOps Engineer
+  role_label: DevOps & Cloud Engineer
 
 compensation:
-  expected_ctc_inr: 400000        # 4.0 LPA (upper end of 3.5-4 LPA target)
-  min_ctc_inr: 350000             # 3.5 LPA floor
+  expected_ctc_inr: 600000
+  min_ctc_inr: 450000
   current_ctc_inr: 0
-  notice_period_days: 0           # user: no notice period (immediate joiner)
+  notice_period_days: 30
 
 search:
-  # Title keywords the platforms are searched with
+  auto_from_resume: true          # on resume upload, also replace keywords/title rules (needs an LLM, see llm:)
+  # Job titles searched on LinkedIn, Naukri and in hiring posts (every keyword x location, rotated across runs)
   keywords:
     - DevOps Engineer
-    - Junior DevOps Engineer
-    - Associate DevOps Engineer
     - Cloud Engineer
-    - Azure DevOps Engineer
-    - AWS Cloud Engineer
     - Site Reliability Engineer
-    - Kubernetes Engineer
-    - Linux System Administrator
-    - Cloud Support Engineer
-  # Hard title filter applied before ANY application is submitted
-  title_include: "devops|cloud|sre|site reliability|kubernetes|k8s|azure|aws|linux|infrastructure|platform engineer|system admin"
-  title_exclude: "senior|\\bsr\\b|\\blead\\b|manager|architect|principal|\\bhead\\b|\\bstaff\\b|director|\\bvp\\b|\\bl[3-9]\\b|\\bintern\\b|internship"
-  locations: [Pune, Mumbai, Hyderabad, Bangalore]   # user 2026-10-23
-  experience_years_filter: "0-2"
+    - Platform Engineer
+  # Hard title filter applied before ANY application is submitted (regex)
+  title_include: "devops|cloud|sre|site reliability|kubernetes|platform engineer|infrastructure"
+  title_exclude: "senior|\\bsr\\b|\\blead\\b|manager|architect|principal|\\bhead\\b|\\bstaff\\b|director|\\bvp\\b|\\bintern\\b"
+  locations: [Pune, Bangalore, Hyderabad, Remote]   # any city names; "Remote" also works
+  experience_years_filter: "0-3"
+  skills: []                      # filled from your resume; used to score jobs for any profession
 
 limits:
   max_applies_per_run_per_platform: 15
@@ -52,37 +51,59 @@ limits:
   delay_between_searches_sec: 5
 
 browser:
-  # Apply runs in a hidden (headless) browser: no window or tabs pop up. login_platform is always visible.
-  headless: true
+  headless: true                  # apply runs in a hidden browser; login_platform is always visible
 
 hr_outreach:
-  # Company discovery for the HR email finder
-  industries: ["IT services", "cloud consulting", "DevOps", "software product company", "managed cloud services"]
+  industries: ["IT services", "software product company"]
   cities:
     - {country: India, state: Maharashtra, city: Pune}
-    - {country: India, state: Maharashtra, city: Mumbai}
-    - {country: India, state: Telangana, city: Hyderabad}
     - {country: India, state: Karnataka, city: Bengaluru}
   company_sizes: ["51-200", "201-500", "501-1000", "1001-5000"]
-  min_confidence: medium          # high | medium | low  (low = unverified pattern guesses, never sent by default)
+  min_confidence: medium          # high | medium | low  (low = unverified guesses, never sent by default)
   max_emails_per_day: 20
   one_email_per_company_days: 60
   send_delay_sec: [45, 90]
-  gmail_user: you@gmail.com
+  gmail_user: you@gmail.com       # set from the app (Settings -> Linked accounts -> Gmail)
 
 safety:
-  dry_run_default: true           # hub tools default to dry-run
-  # Real submissions/sends are REFUSED until you set this to true after reviewing this file.
-  confirmed_by_user: false       # set true yourself after reviewing this file
+  dry_run_default: true           # tools default to dry-run
+  confirmed_by_user: false        # real submissions/sends are refused until you set this to true
 
 autopilot:
-  # Used by autopilot_run. Everything here is enforced in code (no human prompts).
-  min_score: 45                  # jobs scoring below this vs your resume are skipped
-  max_discover: 30               # new job pages read per run
+  min_score: 45                   # jobs scoring below this vs your resume are skipped
+  max_discover: 30                # new job pages read per run
+  max_search_queries: 6           # keyword x location searches per platform per run (rotates through all of them)
+  job_age_days: 7
   max_emails_per_run: 8
-  max_lookups: 15                # company-contact lookups (web search + SMTP probes) per run
-  send_window: [9, 19]           # local hours emails may go out (Mon-Sat)
+  max_lookups: 15
+  send_window: null               # null = emails may go out any time, any day. Or e.g. [9, 19] (hours, end exclusive)
+  send_days: null                 # null = every day. Or e.g. [mon, tue, wed, thu, fri]
+  schedule_every_hours: 0         # built-in 24/7 scheduler: run the autopilot every N hours (0 = off)
+  scan_posts: false               # also scan LinkedIn hiring posts during each autopilot run
+  use_jobspy: false               # also pull jobs from JobSpy (LinkedIn guest API, Naukri, Indeed; no login)
   apply_limits: {naukri: 10, linkedin: 5}
-  platform_cooldown_hours: 24    # after a restriction/captcha/limit is seen, that platform is skipped and email takes over
+  platform_cooldown_hours: 24
   company_blocklist: [jobgether]
-  polish_model: ""               # optional Ollama model name to polish wording (facts are guarded); empty = off
+  polish_model: ""
+
+llm:
+  # Used to analyse hiring posts and to read your resume. kiro needs KIRO_API_KEY (Kiro Pro+, set it in the app:
+  # Settings -> Secrets -> kiro_api_key, or in the server .env). ollama = local model. openai = any OpenAI-compatible
+  # API (DeepSeek, OpenRouter, Groq ...) with key llm_api_key. none = regex rules only.
+  provider: none                  # kiro | ollama | openai | none
+  model: ""                       # e.g. qwen3:8b (ollama), deepseek-chat (openai); empty = provider default (kiro)
+  batch_size: 8                   # posts per LLM request
+  # ollama_url: http://127.0.0.1:11434
+  # base_url: https://api.deepseek.com/v1
+
+post_scan:
+  schedule_every_hours: 0         # built-in scheduler for the hiring-post scan (0 = off)
+  max_queries: 12                 # LinkedIn content searches per scan (rotates through keywords x locations)
+  include_feed: false             # also read your LinkedIn home feed
+  date_posted: past-week          # past-24h | past-week | past-month
+  companies: [all]                # or a list of target companies
+  extra_queries: []
+  alert_telegram: true
+
+notifications:
+  telegram_chat_id: ""            # with secret telegram_bot_token: one Telegram message per matching hiring post

@@ -8,7 +8,10 @@ Every tool in server.TOOLS is exposed automatically, so the app, the stdio MCP s
   GET  /api/v1/runs                  recent background runs
   GET  /api/v1/runs/{run_id}         run status + log tail
   GET/PUT /api/v1/profile            read / replace profile.yaml (validated)
-  POST /api/v1/resume                upload the resume PDF used for scoring and email attachments
+  GET/POST /api/v1/resume            which resume is live / upload the PDF used for search, scoring, emails and applying
+  GET  /api/v1/resume/file           download the live resume (to check it is the right one)
+  GET  /api/v1/accounts              linked accounts: LinkedIn / Naukri / Indeed sessions, Gmail
+  PUT  /api/v1/accounts/gmail        link Gmail: address + app password (optionally test the SMTP login)
   PUT  /api/v1/secrets/{name}        write-only secret store (e.g. gmail_app_password); values are never returned
   POST /mcp                          MCP Streamable-HTTP (JSON response mode) so Kiro/Claude can use the cloud hub
 
@@ -17,6 +20,7 @@ token of at least 32 characters. Repeated bad tokens from one IP are locked out 
 """
 from __future__ import annotations
 
+import contextlib
 import hmac
 import json
 import os
@@ -32,16 +36,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import yaml  # noqa: E402
 from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile  # noqa: E402
 from fastapi.concurrency import run_in_threadpool  # noqa: E402
-from fastapi.responses import JSONResponse  # noqa: E402
+from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 
 import core  # noqa: E402
+import resume  # noqa: E402
+import scheduler  # noqa: E402
 import server  # noqa: E402
 
 API_VERSION = "1.0.0"
 MIN_TOKEN_LEN = 32
 MAX_RESUME_BYTES = 5 * 1024 * 1024
 MAX_PROFILE_BYTES = 64 * 1024
-ALLOWED_SECRETS = {"gmail_app_password", "reacher.env"}
+ALLOWED_SECRETS = {"gmail_app_password", "reacher.env", "kiro_api_key", "llm_api_key", "telegram_bot_token"}
+EMAIL_RX = __import__("re").compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 PROFILE_REQUIRED = ("applicant", "compensation", "search", "limits", "hr_outreach", "safety")
 
 
@@ -125,7 +132,12 @@ def run_tool(name: str, args: dict) -> dict:
 
 def create_app() -> FastAPI:
     _token()  # fail fast on a missing/weak token
-    app = FastAPI(title="Agentic Job Seeker API", version=API_VERSION,
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        scheduler.start()  # 24/7 autopilot / post-scan timer (off unless the profile sets schedule_every_hours)
+        yield
+
+    app = FastAPI(title="Agentic Job Seeker API", version=API_VERSION, lifespan=lifespan,
                   docs_url=None if os.environ.get("JOBHUB_DISABLE_DOCS") == "1" else "/docs", redoc_url=None)
     auth = [Depends(require_auth)]
 
@@ -177,19 +189,79 @@ def create_app() -> FastAPI:
         core.PROFILE_PATH = target
         return {"saved": str(target), "missing_profile_fields": core.missing_profile_fields(data)}
 
+    @app.get("/api/v1/resume", dependencies=auth)
+    def get_resume():
+        return resume.info(core.load_profile())
+
+    @app.get("/api/v1/resume/file", dependencies=auth)
+    def get_resume_file():
+        p = core.load_profile()
+        f = Path(p["applicant"]["resume_path"])
+        if not f.exists():
+            raise HTTPException(404, "no resume uploaded")
+        return FileResponse(f, media_type="application/pdf", filename=resume.attachment_name(p))
+
     @app.post("/api/v1/resume", dependencies=auth)
-    async def upload_resume(file: UploadFile = File(...)):
+    async def upload_resume(file: UploadFile = File(...), update_profile: bool = True, replace_search: bool = False,
+                            sync_naukri: bool = False):
+        """Save the resume, then (by default) refresh profile skills from it so search and scoring follow the new
+        resume. replace_search=true also replaces search keywords/title rules (needs an LLM); sync_naukri=true pushes
+        it to the Naukri profile (live only when the profile allows live actions)."""
         data = await file.read(MAX_RESUME_BYTES + 1)
         if len(data) > MAX_RESUME_BYTES:
             raise HTTPException(413, "resume must be <= 5 MB")
         if not data.startswith(b"%PDF-"):
             raise HTTPException(422, "resume must be a PDF")
-        dest = Path(core.load_profile()["applicant"]["resume_path"])
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        tmp = dest.with_suffix(".upload")
-        tmp.write_bytes(data)
-        tmp.replace(dest)
-        return {"saved": str(dest), "bytes": len(data)}
+        p = core.load_profile()
+        out = {"saved": p["applicant"]["resume_path"], "bytes": len(data),
+               "resume": await run_in_threadpool(resume.save_upload, p, data, file.filename or "resume.pdf")}
+        replace_search = replace_search or bool((p.get("search") or {}).get("auto_from_resume"))
+        if update_profile and out["resume"].get("readable"):
+            out["profile_update"] = await run_in_threadpool(server.resume_to_profile, {"apply": True, "replace_search": replace_search})
+        if sync_naukri:
+            out["naukri_sync"] = await run_in_threadpool(server.sync_resume, {})
+        return out
+
+    @app.get("/api/v1/accounts", dependencies=auth)
+    def accounts():
+        p = core.load_profile()
+        return {"platforms": {pl: server._has_session(pl) for pl in ("linkedin", "naukri", "indeed")},
+                "gmail": {"user": p["hr_outreach"].get("gmail_user", ""), "app_password": bool(core.read_secret("gmail_app_password"))},
+                "remote_browser_url": os.environ.get("JOBHUB_REMOTE_BROWSER_URL", "")}
+
+    @app.put("/api/v1/accounts/gmail", dependencies=auth)
+    async def link_gmail(email: str = Body(..., embed=True, max_length=200),
+                         app_password: str = Body("", embed=True, max_length=64), test: bool = Body(True, embed=True)):
+        email = email.strip()
+        if not EMAIL_RX.fullmatch(email):
+            raise HTTPException(422, "invalid email address")
+        pw = app_password.replace(" ", "").strip()
+        if pw and len(pw) != 16:
+            raise HTTPException(422, "a Gmail app password has 16 characters")
+        if pw and test:
+            import smtplib
+            import ssl
+            def _login():
+                with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ssl.create_default_context(), timeout=20) as smtp:
+                    smtp.login(email, pw)
+            try:
+                await run_in_threadpool(_login)
+            except smtplib.SMTPAuthenticationError as e:
+                raise HTTPException(422, "Gmail rejected this address / app password") from e
+            except OSError as e:
+                raise HTTPException(502, f"could not reach smtp.gmail.com to test: {type(e).__name__}") from e
+        if pw:
+            f = core.SECRETS / "gmail_app_password"
+            fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as fh:
+                fh.write(pw)
+            os.chmod(f, 0o600)
+        p = core.load_profile()
+        p["hr_outreach"]["gmail_user"] = email
+        if str(p["applicant"].get("email", "")).strip().lower() in resume.PLACEHOLDERS:
+            p["applicant"]["email"] = email
+        resume.write_profile(p)
+        return {"gmail_user": email, "app_password_saved": bool(core.read_secret("gmail_app_password")), "tested": bool(pw and test)}
 
     @app.put("/api/v1/secrets/{name}", dependencies=auth)
     async def put_secret(name: str, value: str = Body(..., embed=True, min_length=1, max_length=4096)):
@@ -204,7 +276,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/secrets", dependencies=auth)
     def list_secrets():
-        return {"secrets": {n: (core.SECRETS / n).exists() for n in sorted(ALLOWED_SECRETS)}}
+        return {"secrets": {n: bool(core.read_secret(n)) for n in sorted(ALLOWED_SECRETS)}}
 
     # ------------------------------------------------------------ MCP over HTTP (JSON response mode)
     @app.post("/mcp", dependencies=auth)

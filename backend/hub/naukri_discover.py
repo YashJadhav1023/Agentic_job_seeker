@@ -2,7 +2,8 @@
 
 Uses the saved Naukri browser profile (.profiles/naukri) in a hidden Chromium with the same UA settings the apply bot
 uses (Naukri serves 'Access Denied' to a mismatching UA). It never clicks Apply.
-Usage: naukri_discover.py '<json params>'   params: queries [[keyword, location],...], per_query, max_total, skip_urls, age
+Usage: naukri_discover.py '<json params>'   params: queries [[keyword, location],...], per_query, max_total, skip_urls, age,
+       experience (candidate years), pages (result pages per query, default 2)
 Output: one line per job:  JOB {json}
 """
 import json, os, random, re, subprocess, sys
@@ -28,6 +29,7 @@ def log(msg):
 def main(params):
     skip = set(params.get("skip_urls", []))
     per_query, max_total, age = params.get("per_query", 8), params.get("max_total", 30), params.get("age", 7)
+    experience = int(params.get("experience", 0))
     found = 0
     inc = re.compile(params["include"], re.I) if params.get("include") else None
     exc = re.compile(params["exclude"], re.I) if params.get("exclude") else None
@@ -42,32 +44,40 @@ def main(params):
                 break
             slug = re.sub(r"[^a-z0-9]+", "-", kw.lower()).strip("-")
             lslug = re.sub(r"[^a-z0-9]+", "-", loc.lower()).strip("-")
-            url = f"https://www.naukri.com/{slug}-jobs-in-{lslug}?jobAge={age}&experience=1"
-            try:
-
-                page.goto(url, wait_until="domcontentloaded")
-                page.wait_for_timeout(3500)
-                if "Access Denied" in page.title():
-                    log("blocked: Naukri returned Access Denied")
-                    print("BLOCKED naukri access denied", flush=True)
+            cards, blocked = [], False
+            for pg in range(1, int(params.get("pages", 2)) + 1):  # page 2 only when page 1 had too few new jobs
+                if len(cards) >= per_query:
                     break
-                cards = []
-                for c in page.query_selector_all("div.srp-jobtuple-wrapper, article.jobTuple")[:25]:
-                    a = c.query_selector("a.title")
-                    if not a or len(cards) >= per_query:
-                        continue
-                    t = a.inner_text().strip()
-                    if (inc and not inc.search(t)) or (exc and exc.search(t)):
-                        continue  # irrelevant title: do not even open the page
-                    comp = c.query_selector("a.comp-name")
-                    lo = c.query_selector("span.locWdth, li.location, span.loc")
-                    cards.append({"url": (a.get_attribute("href") or "").split("?")[0], "title": a.inner_text().strip(),
-                                  "company": comp.inner_text().strip() if comp else "",
-                                  "location": lo.inner_text().strip() if lo else loc})
-                log(f"{kw} / {loc}: {len(cards)} cards")
-            except Exception as e:  # noqa: BLE001
-                log(f"search failed {kw}/{loc}: {type(e).__name__}")
-                continue
+                suffix = "" if pg == 1 else f"-{pg}"
+                url = f"https://www.naukri.com/{slug}-jobs-in-{lslug}{suffix}?jobAge={age}&experience={experience}"
+                try:
+                    page.goto(url, wait_until="domcontentloaded")
+                    page.wait_for_timeout(3500)
+                    if "Access Denied" in page.title():
+                        blocked = True
+                        break
+                    for c in page.query_selector_all("div.srp-jobtuple-wrapper, article.jobTuple")[:25]:
+                        a = c.query_selector("a.title")
+                        if not a or len(cards) >= per_query:
+                            continue
+                        t = a.inner_text().strip()
+                        href = (a.get_attribute("href") or "").split("?")[0]
+                        if not href or href in skip or any(x["url"] == href for x in cards):
+                            continue  # known job: does not use up this query's budget
+                        if (inc and not inc.search(t)) or (exc and exc.search(t)):
+                            continue  # irrelevant title: do not even open the page
+                        comp = c.query_selector("a.comp-name")
+                        lo = c.query_selector("span.locWdth, li.location, span.loc")
+                        cards.append({"url": href, "title": t, "company": comp.inner_text().strip() if comp else "",
+                                      "location": lo.inner_text().strip() if lo else loc})
+                except Exception as e:  # noqa: BLE001
+                    log(f"search failed {kw}/{loc} p{pg}: {type(e).__name__}")
+                    break
+            if blocked:
+                log("blocked: Naukri returned Access Denied")
+                print("BLOCKED naukri access denied", flush=True)
+                break
+            log(f"{kw} / {loc}: {len(cards)} new cards")
             for card in cards:
                 if found >= max_total:
                     break

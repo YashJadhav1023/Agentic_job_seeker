@@ -85,7 +85,7 @@ class _HeroCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final live = s['real_actions_allowed'] == true;
-    final candidate = s['candidate'] ?? 'Yash Jadhav';
+    final candidate = s['candidate'] ?? 'Candidate';
     final locations = ((s['locations'] as List?) ?? const []).join(' · ');
 
     return Container(
@@ -376,8 +376,9 @@ class _SetupChecklist extends StatelessWidget {
     final sessions = ((s['login_sessions_saved'] as Map?) ?? const {}).cast<String, dynamic>();
     final creds = ((s['credentials'] as Map?) ?? const {}).cast<String, dynamic>();
     final steps = <(String, bool, String)>[
+      ('Resume uploaded', ((s['resume'] as Map?)?['exists']) == true, '/settings'),
       ('Profile complete', ((s['missing_profile_fields'] as List?) ?? const []).isEmpty, '/settings'),
-      ('Gmail app password', creds['gmail_app_password'] == true, '/settings'),
+      ('Gmail linked', creds['gmail_app_password'] == true, '/settings'),
       ('Naukri login', sessions['naukri'] == true, '/tools/login_platform'),
       ('LinkedIn login', sessions['linkedin'] == true, '/tools/login_platform'),
       ('Live actions confirmed', s['real_actions_allowed'] == true, '/settings'),

@@ -1,7 +1,11 @@
 import sys
 from pathlib import Path
 
+import os
+
 import pytest
+
+os.environ.setdefault("JOBHUB_SCHEDULER", "0")  # no background scheduler thread in tests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hub"))
 import core  # noqa: E402

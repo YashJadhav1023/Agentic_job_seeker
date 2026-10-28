@@ -98,8 +98,35 @@ def db() -> sqlite3.Connection:
       company TEXT PRIMARY KEY, domain TEXT, source TEXT, at TEXT);
     CREATE TABLE IF NOT EXISTS platform_state(
       platform TEXT PRIMARY KEY, blocked_until TEXT, reason TEXT, at TEXT);
+    CREATE TABLE IF NOT EXISTS kv(
+      key TEXT PRIMARY KEY, value TEXT);
+    CREATE TABLE IF NOT EXISTS posts_seen(
+      fp TEXT PRIMARY KEY, at TEXT, verdict TEXT);
     """)
     return c
+
+
+def kv_get(key: str, default=None):
+    with db() as c:
+        r = c.execute("SELECT value FROM kv WHERE key=?", (key,)).fetchone()
+    return json.loads(r[0]) if r else default
+
+
+def kv_set(key: str, value) -> None:
+    with db() as c:
+        c.execute("INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                  (key, json.dumps(value)))
+
+
+def rotate(name: str, items: list, n: int) -> list:
+    """Next `n` items of `items`, continuing where the previous call stopped, so over several runs every
+    combination is visited while each run stays small."""
+    if not items:
+        return []
+    n = max(1, min(n, len(items)))
+    start = int(kv_get("rotate:" + name, 0) or 0) % len(items)
+    kv_set("rotate:" + name, (start + n) % len(items))
+    return [items[(start + i) % len(items)] for i in range(n)]
 
 
 def now_iso() -> str:
@@ -171,34 +198,56 @@ def applied_today() -> int:
 
 
 # ---------------------------------------------------------------- background runner
-def _profile_group(kind: str) -> str:
-    """Runs that open the same saved browser profile (or are the same kind) must not overlap."""
-    for site in ("linkedin", "naukri", "indeed"):
-        if site in kind or (site == "linkedin" and kind.startswith("posts")):
-            return site
-    return kind
+def _profile_groups(kind: str) -> set:
+    """Browser profiles (or exclusive kinds) a run uses. Runs whose sets intersect must not overlap."""
+    if kind.startswith("autopilot"):
+        return {"autopilot", "linkedin", "naukri", "indeed"}
+    out = {site for site in ("linkedin", "naukri", "indeed") if site in kind}
+    if kind.startswith(("posts", "prepare-linkedin")):
+        out.add("linkedin")
+    return out or {kind}
+
+
+def _profile_group(kind: str) -> str:  # kept for callers/tests that expect one name
+    g = _profile_groups(kind)
+    return sorted(g)[0] if len(g) == 1 else "+".join(sorted(g))
 
 
 def running_conflict(kind: str) -> str:
     """Run id of an active run that would collide with `kind`, else ''."""
-    group = _profile_group(kind)
+    groups = _profile_groups(kind)
     with db() as c:
         rows = c.execute("SELECT id, kind FROM runs ORDER BY started DESC LIMIT 30").fetchall()
     for r in rows:
-        if _profile_group(r["kind"]) == group and run_status(r["id"], 1).get("running"):
+        if _profile_groups(r["kind"]) & groups and run_status(r["id"], 1).get("running"):
             return r["id"]
     return ""
 
 
+MAX_PARALLEL = int(os.environ.get("JOBHUB_MAX_PARALLEL", "4"))
+
+
+def running_runs() -> list:
+    with db() as c:
+        rows = c.execute("SELECT id FROM runs ORDER BY started DESC LIMIT 50").fetchall()
+    return [r["id"] for r in rows if run_status(r["id"], 1).get("running")]
+
+
 def spawn(kind: str, argv: list, cwd: Path, env_extra: dict, dry_run: bool, args: dict) -> dict:
-    """Start a background run through hub/launcher.py, which records the child's exit code in <log>.exit."""
+    """Start a background run through hub/launcher.py, which records the child's exit code in <log>.exit.
+    Up to MAX_PARALLEL (default 4) runs at once; runs that share a browser profile never overlap."""
     busy = running_conflict(kind)
     if busy:  # two Chromium instances on one profile crash with "ProcessSingleton" and used to trigger false cooldowns
         return {"error": f"{kind} cannot start: {busy} is still running (wait for it or cancel_run)"}
+    active = running_runs()
+    if len(active) >= MAX_PARALLEL:
+        return {"error": f"{kind} cannot start: {len(active)} runs are still running (limit {MAX_PARALLEL}): "
+                         + ", ".join(active)}
     rid = f"{kind}-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4]}"
     log = RUNS / f"{rid}.log"
     env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "DISPLAY", "WAYLAND_DISPLAY",
-                                                         "XAUTHORITY", "XDG_RUNTIME_DIR", "LANG")
+                                                         "XAUTHORITY", "XDG_RUNTIME_DIR", "LANG",
+                                                         "KIRO_API_KEY", "LLM_API_KEY", "TELEGRAM_BOT_TOKEN")
            or k.startswith(("JOBHUB_", "PLAYWRIGHT_"))}
     env.update({k: str(v) for k, v in env_extra.items()})
     wrapped = [PY, str(ROOT / "hub" / "launcher.py"), str(log) + ".exit"] + list(argv)
@@ -313,7 +362,8 @@ def send_via_gmail(p: dict, to: str, subject: str, body: str, attach_resume: boo
     msg.set_content(body)
     if attach_resume:
         rp = Path(p["applicant"]["resume_path"])
-        msg.add_attachment(rp.read_bytes(), maintype="application", subtype="pdf", filename=rp.name)
+        import resume  # lazy: resume imports core
+        msg.add_attachment(rp.read_bytes(), maintype="application", subtype="pdf", filename=resume.attachment_name(p))
     ctx = ssl.create_default_context()
     with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ctx, timeout=30) as s:
         s.login(user, pw.replace(" ", ""))

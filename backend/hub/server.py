@@ -17,6 +17,9 @@ import core  # noqa: E402
 import autopilot  # noqa: E402
 import composer  # noqa: E402
 import contacts  # noqa: E402
+import llm  # noqa: E402
+import resume  # noqa: E402
+import scheduler  # noqa: E402
 
 SERVER = {"name": "agentic-job-seeker", "version": "1.0.0"}
 
@@ -41,7 +44,7 @@ TOOLS = {
     "search_jobs": ("Discover jobs via LinkedIn's PUBLIC job pages (no login) using the ai-job-search CLI; results are filtered "
                     "by profile title include/exclude (drops Senior/Lead etc.). Read-only, low volume.",
                     _s("", query={"type": "string", "description": "e.g. 'devops engineer'; default: profile keywords[0]"},
-                       location={"type": "string", "description": "Pune|Mumbai|Hyderabad|Bangalore (default Pune)"},
+                       location={"type": "string", "description": "any city or Remote (default: first profile location)"},
                        days={"type": "integer", "enum": [1, 7, 14, 30]}, limit={"type": "integer", "minimum": 1, "maximum": 30})),
     "job_detail": ("Full description of a LinkedIn job id/url from search_jobs (for fit check / tailoring).",
                    _s("", id={"type": "string"})),
@@ -50,11 +53,13 @@ TOOLS = {
                            _s("", job_url_or_id={"type": "string"})),
     "prepare_linkedin": ("Write config for the assisted LinkedIn/Foundit/Glassdoor bot and return the terminal command. "
                          "You must log in manually in the browser it opens.", _s("")),
-    "scan_hiring_posts": ("Scan recent LinkedIn HIRING POSTS (saved session, hidden browser) for DevOps/Cloud roles that fit "
-                          "the profile; stores published HR emails as contacts and apply links in data/post_leads.jsonl. "
-                          "Runs in background; poll run_status. Sends nothing.",
+    "scan_hiring_posts": ("Scan recent LinkedIn HIRING POSTS (saved session, hidden browser) for roles that fit the profile. "
+                          "Posts pass a regex gate, then an LLM (profile llm.provider: kiro with KIRO_API_KEY, ollama, openai) "
+                          "extracts company/role/location and checks them against your preferences; profile rules are used "
+                          "when no LLM is set. Stores published HR emails as contacts and apply links in data/post_leads.jsonl, "
+                          "optional Telegram alert. Runs in background; poll run_status. Sends nothing.",
                           _s("", queries={"type": "array", "items": {"type": "string"},
-                                          "description": "optional LinkedIn content-search queries; default covers roles x cities"})),
+                                          "description": "optional LinkedIn content-search queries; default rotates through keywords x locations"})),
     "career_scan": ("Read open roles from company CAREER PAGES with Firecrawl (find the careers page, extract the jobs, keep "
                     "title-filtered ones) and add them to the job pipeline for scoring + email. Default: known companies not "
                     "scanned yet. Runs in background; poll run_status. Sends nothing.",
@@ -70,7 +75,7 @@ TOOLS = {
                           role={"type": "string"}, city={"type": "string"}, post_asks_for_resume={"type": "boolean"})),
     "find_hr_emails": ("Discover HR/recruiter emails at companies in a target city (public sources + MX checks). "
                        "Stored in hub DB. Background; poll run_status.",
-                       _s("", city={"type": "string", "description": "Pune|Mumbai|Hyderabad|Bengaluru (profile cities)"},
+                       _s("", city={"type": "string", "description": "a city from hr_outreach.cities in the profile"},
                           industry={"type": "string"}, limit={"type": "integer", "minimum": 1, "maximum": 40})),
     "list_hr_contacts": ("List stored HR contacts.", _s("", min_confidence={"type": "string", "enum": ["low", "medium", "high"]},
                                                         status={"type": "string"}, limit={"type": "integer"})),
@@ -104,7 +109,7 @@ TOOLS = {
                       "JD and your resume. Returns subject/body; the resume PDF is attached automatically on send. Does not send.",
                       _s("", job_id={"type": "integer"}, title={"type": "string"}, company={"type": "string"}, jd_text={"type": "string"},
                          source={"type": "string"}, cold={"type": "boolean", "default": False})),
-    "generate_linkedin_pitch": ("Generate a short, tailored LinkedIn connection pitch (max 300 chars) for Yash Jadhav based on JD and company.",
+    "generate_linkedin_pitch": ("Generate a short, tailored LinkedIn connection pitch (max 300 chars) for the candidate, from the profile, resume and JD.",
                                 _s("", job_id={"type": "integer"}, title={"type": "string"}, company={"type": "string"}, jd_text={"type": "string"},
                                    recruiter={"type": "string"})),
     "cancel_run": ("Stop a background run (apply / autopilot / find_hr_emails).", _s("", run_id={"type": "string"})),
@@ -122,7 +127,7 @@ TOOLS = {
                             "and pattern inference for decision-makers) with multi-tier verification "
                             "(DNS/MX, catch-all, SMTP probe, and HTTPS soft-signals via M365 and Gravatar). "
                             "Provide either company name or domain, and optional person names.",
-                            _s("", company={"type": "string", "description": "e.g. 'Stripe', 'Anthropic', 'Setoo'"},
+                            _s("", company={"type": "string", "description": "e.g. 'Stripe', 'Acme'"},
                                domain={"type": "string", "description": "e.g. 'stripe.com' (resolved automatically if omitted)"},
                                names={"type": "array", "items": {"type": "string"},
                                       "description": "optional person names to find email variants for, e.g. ['Patrick Collison']"},
@@ -176,6 +181,20 @@ TOOLS = {
                               limit={"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
                               fetch_description={"type": "boolean", "default": False},
                               save={"type": "boolean", "default": False})),
+    "resume_info": ("Which resume the server is using right now: file name, size, hash, upload time, first line, skills found.",
+                    _s("")),
+    "resume_to_profile": ("Read the uploaded resume and update the profile from it: contact fields still at placeholder "
+                          "values, search.skills, and (replace_search=true, needs an LLM) the job titles and title rules "
+                          "used to search. Preview unless apply=true.",
+                          _s("", apply={"type": "boolean", "default": False}, replace_search={"type": "boolean", "default": False},
+                             use_llm={"type": "boolean", "default": True})),
+    "sync_resume": ("Replace the resume on your Naukri profile with the uploaded one (Naukri applies with the resume stored "
+                    "on your Naukri profile). DRY-RUN by default. Background; poll run_status.",
+                    _s("", dry_run={"type": "boolean"})),
+    "unlink_platform": ("Remove a saved LinkedIn / Naukri / Indeed login session from the server.",
+                        _s("", platform={"type": "string", "enum": ["linkedin", "naukri", "indeed"]})),
+    "scheduler_status": ("Built-in 24/7 scheduler: interval, last and next run for the autopilot and the post scan "
+                         "(autopilot.schedule_every_hours / post_scan.schedule_every_hours in the profile).", _s("")),
 }
 READ = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 READ_NET = dict(READ, openWorldHint=True)
@@ -188,12 +207,13 @@ ANNOT = {"hub_status": READ, "list_hr_contacts": READ, "run_status": READ, "trac
          "login_platform": WRITE, "prepare_linkedin": WRITE, "add_hr_contact": WRITE,
          "find_hr_emails": dict(WRITE, openWorldHint=True), "career_scan": dict(WRITE, openWorldHint=True), "apply_jobs": ACT, "send_email": ACT, "send_hr_emails": ACT,
          "autopilot_run": ACT, "cancel_run": dict(WRITE, idempotentHint=True), "autopilot_stop": dict(WRITE, idempotentHint=True),
-         "suppress_contact": dict(WRITE, idempotentHint=True)}
+         "suppress_contact": dict(WRITE, idempotentHint=True), "resume_info": READ, "scheduler_status": READ,
+         "resume_to_profile": WRITE, "sync_resume": ACT, "unlink_platform": dict(WRITE, destructiveHint=True)}
 
 REQUIRED = {"apply_jobs": ["platform"], "run_status": ["run_id"], "send_email": ["to", "subject", "body"],
             "find_hr_emails": ["city"], "login_platform": ["platform"], "add_hr_contact": ["email", "source_url"], "job_detail": ["id"], "tailor_application": ["job_url_or_id"],
             "verify_email": ["email"], "guard_job_posting": ["jd_text"], "cancel_run": ["run_id"], "autopilot_stop": ["on"], "suppress_contact": ["email_or_domain"],
-            "mailscout_find_emails": ["domain"]}
+            "mailscout_find_emails": ["domain"], "unlink_platform": ["platform"]}
 
 
 def tool_list():
@@ -230,13 +250,23 @@ def hub_status(_):
     ok, why = core.real_actions_allowed(p)
     chrome = any((core.ROOT / ".browsers").glob("chromium-*/chrome-linux*/chrome"))
     return {
-        "candidate": p["applicant"]["name"], "target_ctc_lpa": "3.5-4",
+        "candidate": p["applicant"]["name"],
+        "target_ctc": {"min": p["compensation"].get("min_ctc_inr"), "expected": p["compensation"].get("expected_ctc_inr")},
         "locations": p["search"]["locations"], "dry_run_default": p["safety"]["dry_run_default"],
         "real_actions_allowed": ok, "real_actions_blocked_reason": why,
         "missing_profile_fields": core.missing_profile_fields(p),
         "credentials": {
-            "gmail_app_password": (core.SECRETS / "gmail_app_password").exists(),
+            "gmail_app_password": bool(core.read_secret("gmail_app_password")),
+            "gmail_user": p["hr_outreach"].get("gmail_user", ""),
+            "kiro_api_key": bool(os.environ.get("KIRO_API_KEY") or core.read_secret("kiro_api_key")),
+            "llm_api_key": bool(os.environ.get("LLM_API_KEY") or core.read_secret("llm_api_key")),
+            "telegram_bot_token": bool(os.environ.get("TELEGRAM_BOT_TOKEN") or core.read_secret("telegram_bot_token")),
         },
+        "resume": resume.info(p),
+        "llm": llm.status(p),
+        "scheduler": scheduler.status(),
+        "send_window": autopilot.send_window_text(autopilot.cfg(p)),
+        "runs": {"running": core.running_runs(), "max_parallel": core.MAX_PARALLEL},
         "login_sessions_saved": {pl: _has_session(pl) for pl in ("naukri", "indeed", "linkedin")},
         "chromium_installed": chrome,
         "autopilot": {"stopped": autopilot.stopped(), "cooldowns": {k: autopilot.platform_blocked(k) for k in
@@ -246,6 +276,34 @@ def hub_status(_):
                   "caps": {"applications": p["limits"]["max_applies_per_day_total"],
                            "emails": p["hr_outreach"]["max_emails_per_day"]}},
     }
+
+
+def cover_note(p) -> str:
+    """applicant.cover_note from the profile, else a short note built from the profile (no hardcoded person)."""
+    a = p["applicant"]
+    if a.get("cover_note"):
+        return str(a["cover_note"]).strip()
+    me = composer._identity(p)
+    kws = (p["search"].get("keywords") or ["a suitable"])[:2]
+    extra = []
+    if (p.get("compensation") or {}).get("notice_period_days") == 0:
+        extra.append("an immediate joiner")
+    if str(a.get("willing_to_relocate", "")).lower().startswith("y"):
+        extra.append("open to relocation")
+    return (f"I am a {me} looking for a {' / '.join(kws)} role." + (f" I am {' and '.join(extra)}." if extra else "")
+            + " My resume is attached.")
+
+
+def _location(p) -> dict:
+    """{city, state, country, display} from applicant.location (dict) or applicant.current_location (free text)."""
+    a = p["applicant"]
+    loc = a.get("location") if isinstance(a.get("location"), dict) else {}
+    city = loc.get("city") or (a.get("current_location") or "").split(",")[0].strip()
+    state, country = loc.get("state", ""), loc.get("country", "")
+    if not state and city.lower() in CITY_MAP:
+        state, country = CITY_MAP[city.lower()][0], country or "India"
+    display = ", ".join(x for x in (city, state, country) if x)
+    return {"city": city, "state": state, "country": country, "display": display or a.get("current_location", "")}
 
 
 def _write_job_automation_config(p, limit):
@@ -260,9 +318,7 @@ def _write_job_automation_config(p, limit):
                       "expected_ctc": str(c["expected_ctc_inr"]), "current_ctc": str(c["current_ctc_inr"]),
                       "notice_period": str(c["notice_period_days"]), "experience_years": a["experience_years"],
                       "willing_to_relocate": a["willing_to_relocate"], "current_location": a["current_location"]},
-        "cover_note": ("I am a DevOps & multi-cloud engineer (Azure, AWS, Kubernetes, Terraform, CI/CD) at Setoo Pvt. Ltd., Pune, "
-                       "running AKS workloads and keyless CI/CD pipelines. I am looking for a junior DevOps / Cloud "
-                       "Engineer role and am an immediate joiner, open to relocation."),
+        "cover_note": cover_note(p),
         "limits": {"max_per_platform": limit, "delay_between_jobs": p["limits"]["delay_between_jobs_sec"],
                    "delay_between_searches": p["limits"]["delay_between_searches_sec"]},
     }
@@ -320,9 +376,8 @@ def search_jobs(a):
     import re
     p = core.load_profile()
     s = p["search"]
-    loc = LOC_MAP.get(a.get("location", "pune").strip().lower())
-    if not loc:
-        return {"error": f"location must be one of {sorted(LOC_MAP)}"}
+    raw = (a.get("location") or (s.get("locations") or ["Remote"])[0]).strip()
+    loc = autopilot.linkedin_location(raw)
     args = ["search", "-q", a.get("query") or s["keywords"][0], "-l", loc, "--limit", str(a.get("limit", 15)), "--format", "json"]
     if a.get("days"):
         args += ["--jobage", str(a["days"])]
@@ -331,7 +386,7 @@ def search_jobs(a):
     keep = [r for r in res if inc.search(r["title"]) and not exc.search(r["title"])]
     return {"location": loc, "fetched": len(res), "kept_after_title_filter": len(keep),
             "jobs": [{k: r[k] for k in ("id", "title", "company", "location", "date", "url")} for r in keep],
-            "note": "Salary is rarely listed; check job_detail. Target is 3.5-4 LPA (junior/0-2 yrs)."}
+            "note": "Salary is rarely listed; check job_detail."}
 
 
 def job_detail(a):
@@ -347,7 +402,8 @@ def tailor_application(a):
     return {"workspace": str(AIJS), "job": a["job_url_or_id"],
             "profile_files": [str(AIJS / "CLAUDE.md"), str(AIJS / ".claude/skills/job-application-assistant/01-candidate-profile.md")],
             "workflow": str(AIJS / ".claude/commands/apply.md"),
-            "master_cv": str(AIJS / "cv/main_yash_master.tex"), "master_cover_letter": str(AIJS / "cover_letters/cover_yash_master.tex"),
+            "master_cv": str(next(iter(sorted((AIJS / "cv").glob("*master*.tex"))), AIJS / "cv")),
+            "master_cover_letter": str(next(iter(sorted((AIJS / "cover_letters").glob("*master*.tex"))), AIJS / "cover_letters")),
             "how": "Open the workspace in your agent (Kiro/Antigravity/Cline), read AGENTS.md, then follow apply.md with this job "
                    "as the argument. Drafts are LaTeX; PDF compile needs pdflatex/tectonic.",
             "latex_installed": bool(shutil.which("pdflatex") or shutil.which("tectonic"))}
@@ -357,9 +413,14 @@ def prepare_linkedin(_, limit=None):
     p = core.load_profile()
     a, c, s = p["applicant"], p["compensation"], p["search"]
     first, _, last = a["name"].partition(" ")
+    loc = _location(p)
+    edu = a.get("education") if isinstance(a.get("education"), dict) else {}
+    yrs = float(re.findall(r"\d+(?:\.\d+)?", str(a.get("experience_years", "0")))[0]) if re.findall(r"\d", str(a.get("experience_years", "0"))) else 0
+    levels = ["Internship", "Entry Level", "Associate"] if yrs < 2 else ["Associate", "Mid-Senior Level"] if yrs < 8 else ["Mid-Senior Level", "Director"]
+    note = cover_note(p)
     cfg = f'''# generated by job-hub from profile.yaml - no passwords here; log in manually when the browser opens
 PERSONAL = {{"first_name": {first!r}, "last_name": {last!r}, "email": {a["email"]!r}, "phone": {a["phone"]!r},
-  "location": "Pune, Maharashtra, India", "city": "Pune", "state": "Maharashtra", "country": "India", "zip_code": "",
+  "location": {loc["display"]!r}, "city": {loc["city"]!r}, "state": {loc["state"]!r}, "country": {loc["country"]!r}, "zip_code": "",
   "linkedin_url": {a["linkedin"]!r}, "resume_path": {a["resume_path"]!r}, "gender": "", "ethnicity": "", "age": "",
   "veteran": "No", "disability": "No"}}
 LINKEDIN = {{"email": {a["email"]!r}, "password": ""}}
@@ -367,25 +428,25 @@ INDEED = {{"email": {a["email"]!r}, "password": ""}}
 NAUKRI = {{"email": {a["email"]!r}, "password": ""}}
 GLASSDOOR = {{"email": {a["email"]!r}, "password": ""}}
 FOUNDIT = {{"email": {a["email"]!r}, "password": ""}}
-SEARCH = {{"keywords": {s["keywords"][:6]!r}, "location": "India", "remote_only": False, "easy_apply_only": True,
-  "max_applications": {limit or p["limits"]["max_applies_per_run_per_platform"]}, "experience_level": ["Entry Level", "Associate"],
+SEARCH = {{"keywords": {s["keywords"][:6]!r}, "location": {(loc["country"] or loc["display"] or "Worldwide")!r}, "remote_only": False, "easy_apply_only": True,
+  "max_applications": {limit or p["limits"]["max_applies_per_run_per_platform"]}, "experience_level": {levels!r},
   "date_posted": "past week"}}
 COMPANY_BLOCKLIST = {p.get("autopilot", {}).get("company_blocklist", [])!r}
 CONCURRENT_TABS = False
 
 MAX_CONCURRENT_JOBS = 1
 WORK_AUTH = {{"authorized_to_work": "Yes", "require_sponsorship": "No", "notice_period": {str(c["notice_period_days"])!r},
-  "willing_to_relocate": "Yes", "remote_work": "Yes", "us_timezone": "No"}}
-EDUCATION = {{"highest_level": "Bachelor's", "degree": "B.Tech Computer Science & Engineering",
-  "university": "V.V.P Institute of Technology, Solapur", "graduation_year": "2025", "gpa": "6.84"}}
+  "willing_to_relocate": {("Yes" if str(a.get("willing_to_relocate", "")).lower().startswith("y") else "No")!r}, "remote_work": "Yes", "us_timezone": "No"}}
+EDUCATION = {{"highest_level": {edu.get("highest_level", "Bachelor's")!r}, "degree": {edu.get("degree", "")!r},
+  "university": {edu.get("university", "")!r}, "graduation_year": {str(edu.get("graduation_year", ""))!r}, "gpa": {str(edu.get("gpa", ""))!r}}}
 EXPERIENCE = {{"total_years": {a["experience_years"]!r}, "current_company": {(p.get("experience") or {}).get("current_company", "")!r}, "current_title": {(p.get("experience") or {}).get("current_title", "")!r},
   "current_salary": {str(c["current_ctc_inr"])!r}, "expected_salary": {str(c["expected_ctc_inr"])!r}, "currency": "INR"}}
-SAVED_ANSWERS = {{"english": "Yes", "speak english": "Yes", "highest education": "Bachelor's", "degree": "Bachelor's",
+SAVED_ANSWERS = {{"english": "Yes", "speak english": "Yes", "highest education": {edu.get("highest_level", "Bachelor's")!r}, "degree": {edu.get("highest_level", "Bachelor's")!r},
   "years of experience": {a["experience_years"]!r}, "notice period": {str(c["notice_period_days"])!r},
   "expected ctc": {str(c["expected_ctc_inr"])!r}, "expected salary": {str(c["expected_ctc_inr"])!r},
-  "current ctc": {str(c["current_ctc_inr"])!r}, "relocate": "Yes", "authorized": "Yes", "work authorization": "Yes",
+  "current ctc": {str(c["current_ctc_inr"])!r}, "relocate": {("Yes" if str(a.get("willing_to_relocate", "")).lower().startswith("y") else "No")!r}, "authorized": "Yes", "work authorization": "Yes",
   "sponsorship": "No", "visa": "No", "disability": "No", "veteran": "No",
-  "cover letter": "Hello, I am a DevOps and multi-cloud engineer (Azure, AWS, Kubernetes, Terraform, CI/CD) looking for a junior DevOps/Cloud role. Resume attached. - Yash Jadhav"}}
+  "cover letter": {(note + " - " + a["name"])!r}}}
 '''
     d = core.TOOLS / "multi-platform-job-apply-bot"
     (d / "config.py").write_text(cfg)
@@ -403,10 +464,15 @@ def find_hr_emails(a):
     p = core.load_profile()
     h = p["hr_outreach"]
     key = a["city"].strip().lower()
-    if key not in CITY_MAP:
-        return {"error": f"city must be one of {sorted(CITY_MAP)}"}
-    state, city = CITY_MAP[key]
-    params = {"industry": a.get("industry") or h["industries"][0], "country": "India", "state": state, "city": city,
+    known = {str(x.get("city", "")).lower(): x for x in h.get("cities") or [] if isinstance(x, dict)}
+    if key in known:
+        state, city, country = known[key].get("state", ""), known[key]["city"], known[key].get("country", "India")
+    elif key in CITY_MAP:
+        (state, city), country = CITY_MAP[key], "India"
+    else:
+        return {"error": f"add {a['city']!r} to hr_outreach.cities in the profile ({{country, state, city}}) first"}
+    key = re.sub(r"[^a-z0-9]+", "-", key)
+    params = {"industry": a.get("industry") or h["industries"][0], "country": country, "state": state, "city": city,
               "sizes": h["company_sizes"], "roles": ["hr"], "limit": a.get("limit", 10), "verify": True}
     r = core.spawn("hr-" + key, [core.PY, str(core.ROOT / "hub" / "hr_runner.py"), json.dumps(params)],
                    core.ROOT, {}, True, params)
@@ -429,14 +495,14 @@ def career_scan(a):
 
 def hiring_post_queries(a):
     p = core.load_profile()
-    cities = [a["city"]] if a.get("city") else ["Pune", "Mumbai", "Hyderabad", "Bangalore"]
+    cities = [a["city"]] if a.get("city") else [l for l in p["search"]["locations"] if str(l).lower() != "all"][:4]
     qs = []
-    for c in cities:
-        for role in ("DevOps engineer", "cloud engineer", "Azure DevOps", "AWS DevOps"):
-            qs.append(f'site:linkedin.com/posts hiring "{role}" {c} "email" OR "send your resume" OR "share your cv" fresher OR "0-2 years"')
+    for c in cities or [""]:
+        for role in (p["search"].get("keywords") or [])[:4]:
+            qs.append(f'site:linkedin.com/posts hiring "{role}" {c} "email" OR "send your resume" OR "share your cv"'.replace("  ", " "))
     return {"queries": qs, "how": "Run each with a web search tool. Only store an email via add_hr_contact when the post itself "
             "invites applications to that address. Skip senior/10+ yrs roles. Max a few queries per session (low volume).",
-            "target": f"{p['compensation']['min_ctc_inr']//100000}-{p['compensation']['expected_ctc_inr']//100000} LPA junior roles"}
+            "target": ", ".join((p["search"].get("keywords") or [])[:4])}
 
 
 def add_hr_contact(a):
@@ -475,7 +541,7 @@ def send_hr_emails(a):
         if not ok:
             return {"error": "sending blocked: " + why, "hint": "use dry_run=true to preview drafts"}
         if not autopilot.in_send_window(autopilot.cfg(p)):
-            return {"error": "outside send window (09:00-19:00 Mon-Sat)"}
+            return {"error": "outside send window: " + autopilot.send_window_text(autopilot.cfg(p))}
         if remaining <= 0:
             return {"error": "daily email cap reached"}
     n = min(a.get("limit", 5), max(remaining, 0) if not dry else a.get("limit", 5))
@@ -484,7 +550,7 @@ def send_hr_emails(a):
         return {"result": "no eligible contacts (run find_hr_emails first, or lower min_confidence in profile.yaml)"}
     out = []
     for i, ct in enumerate(contacts):
-        role_title = ct.get("role") or "DevOps / Cloud Engineer"
+        role_title = ct.get("role") or (p["search"].get("keywords") or ["open position"])[0]
         mail = composer.compose(p, {"title": role_title, "company": ct.get("company", ""), "description": ""},
                                 recruiter=ct.get("name", ""), cold=True)
         subject, body = mail["subject"], mail["body"]
@@ -520,7 +586,7 @@ def send_email(a):
     if not ok:
         return {"error": "sending blocked: " + why}
     if not autopilot.in_send_window(autopilot.cfg(p)):
-        return {"error": "outside send window (09:00-19:00 Mon-Sat)"}
+        return {"error": "outside send window: " + autopilot.send_window_text(autopilot.cfg(p))}
     if core.sent_today() >= p["hr_outreach"]["max_emails_per_day"]:
         return {"error": "daily email cap reached"}
     if contacts.is_suppressed(a["to"]):
@@ -693,7 +759,12 @@ def verify_resume_pdf(a):
     r_path = Path(a.get("resume_path") or p["applicant"]["resume_path"])
     if not r_path.exists():
         return {"error": f"resume not found at {r_path}"}
-    req_words = a.get("required_keywords") or ["Setoo", "DevOps", "Terraform", "Kubernetes"]
+    if a.get("required_keywords"):
+        req_words = a["required_keywords"]
+    else:  # words the resume itself contains (exact case): checks the PDF text layer without assuming a profession
+        text = composer.resume_text(str(r_path))
+        cands = [w for w in (p["applicant"].get("name") or "").split()] + list(p["search"].get("skills") or []) + list(composer.SKILLS)
+        req_words = [w for w in dict.fromkeys(cands) if len(w) > 2 and w in text][:4]
     exp_pages = a.get("expected_pages", 1)
     try:
         text, pages, extractor = verify_pdf.extract_text_layer(r_path)
@@ -761,6 +832,65 @@ def lead_finder_search(a):
 def multi_board_search(a):
     import jobspy_tool
     return jobspy_tool.multi_board_search(a)
+
+
+def resume_info(_):
+    return resume.info(core.load_profile())
+
+
+def resume_to_profile(a):
+    """Read the uploaded resume and update the profile so job search follows it."""
+    p = core.load_profile()
+    sugg = resume.suggest_profile(p, use_llm=a.get("use_llm", True))
+    if sugg.get("error"):
+        return sugg
+    if not a.get("apply", False):
+        return {"suggestion": sugg, "applied": False,
+                "note": "Preview only. Call again with apply=true (and replace_search=true to also replace search keywords)."}
+    changed = resume.apply_suggestion(p, sugg, replace_search=a.get("replace_search", False))
+    if changed:
+        resume.write_profile(p)
+    return {"applied": True, "changed": changed, "via": sugg.get("via"), "llm_error": sugg.get("llm_error")}
+
+
+def sync_resume(a):
+    """Push the uploaded resume to the Naukri profile (Naukri applies with the resume stored there)."""
+    import shutil
+    import tempfile
+    p = core.load_profile()
+    src = Path(p["applicant"]["resume_path"])
+    if not src.exists():
+        return {"error": "no resume uploaded yet"}
+    if not _has_session("naukri"):
+        return {"error": "Naukri is not linked - call login_platform('naukri') first"}
+    dry = a.get("dry_run", p["safety"]["dry_run_default"])
+    tmpd = Path(tempfile.mkdtemp(prefix="resume-", dir=str(core.ROOT / "data")))
+    named = tmpd / resume.attachment_name(p)
+    shutil.copyfile(src, named)  # Naukri shows the uploaded file name to recruiters
+    r = core.spawn("naukri-resume", [core.PY, str(core.ROOT / "hub" / "naukri_resume.py"), str(named), "1" if dry else "0"],
+                   core.ROOT, {"PYTHONUNBUFFERED": "1", "PLAYWRIGHT_BROWSERS_PATH": str(core.ROOT / ".browsers")}, dry,
+                   {"platform": "naukri", "file": named.name})
+    r["note"] = ("DRY-RUN: only checks the Naukri profile page." if dry else
+                 f"Replacing the resume on your Naukri profile with {named.name}.") + \
+        " LinkedIn Easy Apply and Indeed upload the hub resume on every application."
+    return r
+
+
+def unlink_platform(a):
+    """Forget a saved login session (LinkedIn / Naukri / Indeed) on the server."""
+    import shutil
+    pl = a["platform"]
+    if pl not in ("linkedin", "naukri", "indeed"):
+        return {"error": "platform must be linkedin, naukri or indeed"}
+    if core.running_conflict("apply-" + pl):
+        return {"error": f"a {pl} run is active; cancel it first"}
+    d = core.ROOT / ".profiles" / pl
+    shutil.rmtree(d, ignore_errors=True)
+    return {"unlinked": pl, "session_saved": _has_session(pl)}
+
+
+def scheduler_status(_):
+    return scheduler.status()
 
 
 HANDLERS = {k: globals()[k] for k in TOOLS}

@@ -1,15 +1,17 @@
 # Agentic Job Seeker
 
-Your personal job-search agent, running 24/7 on a small cloud server, controlled from an Android app.
+A job-search agent that anyone can run for themselves: 24/7 on a small cloud server, controlled from an Android app,
+driven by the resume you upload. Nothing about a particular person, role or city is built in; it all comes from your
+profile and resume.
 
-It started as the local `job-hub` MCP server and keeps all of its original **32 tools** (plus `career_scan`) — job discovery on LinkedIn,
+It started as the local `job-hub` MCP server and keeps all of its original tools — job discovery on LinkedIn,
 Naukri, Indeed, Glassdoor and Google Jobs, resume-vs-JD scoring, Easy-Apply bots, HR/recruiter email discovery
 and verification, JD-tailored application emails with your resume attached, and a fully guarded autopilot.
 
 ```
  Android app (Flutter)  ──HTTPS + bearer token──▶  Caddy (auto TLS)  ──▶  FastAPI  ──▶  job-hub tools
  dashboard · jobs · contacts                       on one EC2 instance        │          (bots, mailer, SQLite)
- runs (live logs) · all 32 tools · settings                                   └─▶  /mcp  (Kiro / Claude can use it too)
+ runs (live logs) · all tools · settings                                   └─▶  /mcp  (Kiro / Claude can use it too)
 ```
 
 | Folder | What it is |
@@ -23,20 +25,58 @@ and verification, JD-tailored application emails with your resume attached, and 
 
 - Everything that applies or sends email is a **dry run by default**. Live actions additionally need
   `safety.confirmed_by_user: true` in your profile, and the app asks for confirmation.
-- Daily caps, one email per company per 60 days, suppression list, bounce/unsubscribe handling,
-  send window 09–19 Mon–Sat, and a kill switch (`autopilot_stop`, a toggle on the Home screen).
+- Daily caps, one email per company per 60 days, suppression list, bounce/unsubscribe handling, and a kill switch
+  (`autopilot_stop`, a toggle on the Home screen). Emails may go out at any time by default; set
+  `autopilot.send_window: [9, 19]` and/or `autopilot.send_days: [mon, tue, wed, thu, fri]` to restrict them.
+- Up to 4 background tasks run at once (`JOBHUB_MAX_PARALLEL`). Tasks that use the same browser session
+  (for example two LinkedIn runs, or the autopilot and a Naukri run) still wait for each other.
 - The API refuses to start without a ≥32-char token; repeated bad tokens lock the client IP out for 15 minutes.
   Secrets (Gmail app password) are write-only through the API and stored with mode 600.
 - Platform restrictions/captchas put that platform on cooldown and email outreach takes over.
 
-## The 32 tools
+## Resume, linked accounts and 24/7 runs
+
+- **Resume.** Upload it in the app (Settings → Resume). The server keeps one live copy (plus the last 5 versions) and
+  uses it everywhere: job scoring, the email attachment (sent under the file name you uploaded), LinkedIn Easy Apply
+  and Indeed uploads. Naukri applies with the resume stored on your Naukri profile, so the upload dialog can also
+  replace that one (`sync_resume`). `GET /api/v1/resume` / `resume_info` shows exactly which file is live.
+- **Search follows the resume.** On upload, `search.skills` and contact fields still at placeholder values are filled
+  from the resume. With `search.auto_from_resume: true` and an AI provider, the job titles and title filters are
+  taken from it too (`resume_to_profile`).
+- **Linked accounts.** Settings → Linked Accounts: LinkedIn, Naukri and Indeed are linked by signing in once in the
+  remote browser (the session stays on your server; the app never sees the password) and can be disconnected again.
+  Gmail is linked with its address plus a Google App Password; the login is tested before it is saved.
+- **Always on.** `autopilot.schedule_every_hours` and `post_scan.schedule_every_hours` start the built-in scheduler
+  (0 = off); the server then runs them around the clock. `scheduler_status` shows the last and next run.
+- **Discovery.** LinkedIn and Naukri are searched with every `search.keywords` × `search.locations` pair, rotated across
+  runs (`autopilot.max_search_queries` per run), any city name or `Remote`. Naukri reads a second result page when the
+  first has too few new jobs. `autopilot.use_jobspy: true` adds JobSpy (no-login LinkedIn/Naukri/Indeed).
+
+## AI hiring-post analysis (Kiro API key, Ollama or any OpenAI-compatible API)
+
+`scan_hiring_posts` reads LinkedIn content search (and optionally your feed), skips posts it has seen before, and runs a
+pipeline adapted from [job-search-agent](https://github.com/sanchittanwar7/job-search-agent): a regex gate drops
+posts with no hiring intent, job seekers and announcements; an LLM then extracts company, role, location and minimum
+experience and checks them against your profile; finally the profile's own rules are re-applied, so the model can
+never widen the search. Several posts go into one request to keep cost down. Matches store published HR emails and
+apply links, and can send a Telegram alert.
+
+| `llm.provider` | Needs |
+| --- | --- |
+| `kiro` | `kiro-cli` in the image (`JOBHUB_INSTALL_KIRO=1` in `deploy/.env`, then rebuild) and a Kiro API key (Kiro Pro and above) saved in the app as `kiro_api_key` or `KIRO_API_KEY` in `deploy/.env`. It runs a tool-less agent with no MCP servers in an isolated folder, and post text is passed on stdin, so a post cannot make it run anything. |
+| `ollama` | a reachable Ollama server (`llm.ollama_url`) and `llm.model`, e.g. `qwen3:8b` |
+| `openai` | `llm.base_url`, `llm.model` and the `llm_api_key` secret (DeepSeek, OpenRouter, Groq, OpenAI ...) |
+| `none` | nothing; the profile rules alone decide (previous behaviour) |
+
+## The tools
 
 `hub_status` `tracker_report` · `search_jobs` `multi_board_search` (JobSpy) `job_detail` `list_jobs`
 `scan_hiring_posts` `hiring_post_queries` `career_scan` (Firecrawl) · `apply_jobs` `login_platform` `prepare_linkedin` `tailor_application`
 `verify_resume_pdf` `guard_job_posting` · `autopilot_run` `autopilot_stop` `run_status` `cancel_run` ·
 `find_contact` `find_hr_emails` `find_company_emails` `lead_finder_search` `mailscout_find_emails`
 `verdict_email_tool` `verify_email` `add_hr_contact` `list_hr_contacts` `suppress_contact` ·
-`compose_email` `send_email` `send_hr_emails` `generate_linkedin_pitch`
+`compose_email` `send_email` `send_hr_emails` `generate_linkedin_pitch` ·
+`resume_info` `resume_to_profile` `sync_resume` `unlink_platform` `scheduler_status`
 
 The app reads the catalogue from `GET /api/v1/tools` and builds each tool's form from its JSON schema, so a tool
 added on the server shows up in the app without an app update.
@@ -77,9 +117,10 @@ Any other Linux VM works the same way: install Docker, clone, `cd deploy && ./se
 1. Download `agentic-job-seeker.apk` from the latest CI run (Actions → CI → Artifacts) or a Release, and install it
    (allow "install unknown apps" for your browser/Files).
 2. Settings → server URL + API token → **Save & test connection**.
-3. Settings → upload your resume PDF, edit the profile (name, keywords, cities, CTC), add the Gmail app password.
-4. Home → **Log in** next to LinkedIn/Naukri/Indeed → **Open remote browser** and sign in there. The session stays
-   on your server, so the bots can apply for you.
+3. Settings → upload your resume PDF (contact details and skills are read from it), check the profile (keywords,
+   cities, CTC).
+4. Settings → Linked Accounts: link Gmail (address + app password) and LinkedIn / Naukri / Indeed (**Link** opens the
+   remote browser; sign in there). Sessions stay on your server, so the bots can apply for you.
 5. Home → **Autopilot (dry run)**, then watch it under **Runs**. When the drafts look right, set
    `safety.confirmed_by_user: true` in the profile and run live.
 

@@ -99,12 +99,34 @@ class ApiClient {
   Future<Map<String, dynamic>> saveProfile(String yaml) async => (await _send(() => _http.put(_u('/api/v1/profile'),
       headers: {..._headers, 'Content-Type': 'application/x-yaml'}, body: utf8.encode(yaml)))) as Map<String, dynamic>;
 
-  Future<Map<String, dynamic>> uploadResume(List<int> bytes, String filename) async {
-    final req = http.MultipartRequest('POST', _u('/api/v1/resume'))
+  /// Upload the resume. By default the server refreshes profile skills from it; [replaceSearch] also lets it pick
+  /// the job titles to search, [syncNaukri] pushes it to the Naukri profile.
+  Future<Map<String, dynamic>> uploadResume(List<int> bytes, String filename,
+      {bool updateProfile = true, bool replaceSearch = false, bool syncNaukri = false}) async {
+    final req = http.MultipartRequest(
+        'POST',
+        _u('/api/v1/resume', {
+          'update_profile': '$updateProfile',
+          'replace_search': '$replaceSearch',
+          'sync_naukri': '$syncNaukri',
+        }))
       ..headers.addAll(_headers)
       ..files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
     return (await _send(() async => http.Response.fromStream(await _http.send(req)))) as Map<String, dynamic>;
   }
+
+  Future<Map<String, dynamic>> resumeInfo() async =>
+      (await _send(() => _http.get(_u('/api/v1/resume'), headers: _headers))) as Map<String, dynamic>;
+
+  Future<Map<String, dynamic>> accounts() async =>
+      (await _send(() => _http.get(_u('/api/v1/accounts'), headers: _headers))) as Map<String, dynamic>;
+
+  /// Link Gmail: the address is saved in the profile, the app password as a write-only secret. [test] checks the
+  /// login against smtp.gmail.com first.
+  Future<Map<String, dynamic>> linkGmail(String email, String appPassword, {bool test = true}) async =>
+      (await _send(() => _http.put(_u('/api/v1/accounts/gmail'),
+          headers: {..._headers, 'Content-Type': 'application/json'},
+          body: jsonEncode({'email': email, 'app_password': appPassword, 'test': test})))) as Map<String, dynamic>;
 
   Future<Map<String, dynamic>> secrets() async =>
       (await _send(() => _http.get(_u('/api/v1/secrets'), headers: _headers))) as Map<String, dynamic>;

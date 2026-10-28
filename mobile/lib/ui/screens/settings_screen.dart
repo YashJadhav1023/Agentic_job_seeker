@@ -87,57 +87,150 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
-  Future<void> _uploadResume() async {
+  Future<void> _uploadResume({bool naukriLinked = false}) async {
     final picked = await FilePicker.pickFiles(type: FileType.custom, allowedExtensions: ['pdf']);
     final file = picked.singleOrNull;
-    if (file == null) return;
+    if (file == null || !mounted) return;
+    var replaceSearch = true;
+    var syncNaukri = naukriLinked;
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (c) => StatefulBuilder(
+        builder: (c, setD) => AlertDialog(
+          title: const Text('Use this resume'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(file.name, style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+              const SizedBox(height: 8),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: replaceSearch,
+                onChanged: (v) => setD(() => replaceSearch = v ?? false),
+                title: const Text('Find jobs that match this resume', style: TextStyle(fontSize: 13.5)),
+                subtitle: const Text('Job titles and title filters are taken from the resume (needs AI analysis set up). '
+                    'Skills are always refreshed.', style: TextStyle(fontSize: 11.5)),
+              ),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: syncNaukri,
+                onChanged: naukriLinked ? (v) => setD(() => syncNaukri = v ?? false) : null,
+                title: const Text('Also replace my Naukri profile resume', style: TextStyle(fontSize: 13.5)),
+                subtitle: Text(naukriLinked ? 'Naukri applies with the resume on your Naukri profile.' : 'Link Naukri first.',
+                    style: const TextStyle(fontSize: 11.5)),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Upload')),
+          ],
+        ),
+      ),
+    );
+    if (go != true) return;
     try {
-      final r = await requireClientFrom(ref).uploadResume(await file.readAsBytes(), file.name);
-      _snack('Resume uploaded successfully (${(r['bytes'] / 1024).toStringAsFixed(1)} KB)');
+      final r = await requireClientFrom(ref)
+          .uploadResume(await file.readAsBytes(), file.name, replaceSearch: replaceSearch, syncNaukri: syncNaukri);
+      final changed = ((r['profile_update'] as Map?)?['changed'] as Map?)?.keys.join(', ') ?? '';
+      final sync = r['naukri_sync'] is Map ? ((r['naukri_sync'] as Map)['error'] ?? 'Naukri update started') : null;
+      _snack('Resume uploaded (${(r['bytes'] / 1024).toStringAsFixed(1)} KB)'
+          '${changed.isEmpty ? '' : ' · profile updated: $changed'}${sync == null ? '' : ' · $sync'}');
       ref.invalidate(statusProvider);
     } catch (e) {
       _snack('$e');
     }
   }
 
-  Future<void> _setGmail() async {
+  Future<void> _setSecret(String name, String title, String help) async {
     final ctl = TextEditingController();
     final v = await showDialog<String>(
       context: context,
       builder: (c) => AlertDialog(
-        title: const Text('Gmail App Password'),
+        title: Text(title),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Generate a 16-character App Password at myaccount.google.com → Security → App passwords.\n\n'
-              'It will be securely saved on your server (file mode 0600) and never exposed.',
-              style: TextStyle(fontSize: 13, color: AppTheme.textSecondary, height: 1.4),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: ctl,
-              obscureText: true,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: '16-character password',
-                prefixIcon: Icon(Icons.key_rounded),
-              ),
-            ),
+            Text(help, style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary, height: 1.4)),
+            const SizedBox(height: 12),
+            TextField(controller: ctl, obscureText: true, autofocus: true,
+                decoration: const InputDecoration(labelText: 'Value', prefixIcon: Icon(Icons.key_rounded))),
           ],
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(c), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(c, ctl.text), child: const Text('Save Password')),
+          FilledButton(onPressed: () => Navigator.pop(c, ctl.text), child: const Text('Save')),
         ],
       ),
     );
     ctl.dispose();
     if (v == null || v.trim().isEmpty) return;
     try {
-      await requireClientFrom(ref).setSecret('gmail_app_password', v.trim());
-      _snack('Gmail password saved on server');
+      await requireClientFrom(ref).setSecret(name, v.trim());
+      _snack('$title saved on the server');
+      ref.invalidate(statusProvider);
+    } catch (e) {
+      _snack('$e');
+    }
+  }
+
+  Future<void> _unlink(String platform) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: Text('Disconnect $platform?'),
+        content: const Text('The saved login session is deleted from your server. You can link it again any time.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Disconnect')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final r = await requireClientFrom(ref).call('unlink_platform', {'platform': platform});
+    _snack(r.isError ? (r.error ?? 'failed') : '$platform disconnected');
+    ref.invalidate(statusProvider);
+  }
+
+  Future<void> _setGmail(String currentUser) async {
+    final mail = TextEditingController(text: currentUser.contains('example') ? '' : currentUser);
+    final pw = TextEditingController();
+    final v = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Link Gmail'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Applications and HR emails are sent from this Gmail account with your resume attached.\n'
+              'Create a 16-character App Password at myaccount.google.com → Security → App passwords '
+              '(2-step verification must be on). It is stored on your server only and never shown again.',
+              style: TextStyle(fontSize: 12.5, color: AppTheme.textSecondary, height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            TextField(controller: mail, keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(labelText: 'Gmail address', prefixIcon: Icon(Icons.alternate_email_rounded))),
+            const SizedBox(height: 10),
+            TextField(controller: pw, obscureText: true,
+                decoration: const InputDecoration(labelText: 'App password (16 characters)', prefixIcon: Icon(Icons.key_rounded))),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Test & Save')),
+        ],
+      ),
+    );
+    final email = mail.text.trim(), pass = pw.text.trim();
+    mail.dispose();
+    pw.dispose();
+    if (v != true || email.isEmpty) return;
+    try {
+      await requireClientFrom(ref).linkGmail(email, pass);
+      _snack(pass.isEmpty ? 'Gmail address saved' : 'Gmail linked and login tested');
       ref.invalidate(statusProvider);
     } catch (e) {
       _snack('$e');
@@ -155,6 +248,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final connected = ref.watch(clientProvider) != null;
     final status = ref.watch(statusProvider).value;
     final creds = ((status?['credentials'] as Map?) ?? const {}).cast<String, dynamic>();
+    final sessions = ((status?['login_sessions_saved'] as Map?) ?? const {}).cast<String, dynamic>();
+    final res = ((status?['resume'] as Map?) ?? const {}).cast<String, dynamic>();
+    final llm = ((status?['llm'] as Map?) ?? const {}).cast<String, dynamic>();
+    final runs = ((status?['runs'] as Map?) ?? const {}).cast<String, dynamic>();
+    final gmailUser = '${creds['gmail_user'] ?? ''}';
+    final resumeText = res['exists'] == true
+        ? '${res['original_filename'] ?? res['attachment_name']} · ${(((res['bytes'] as num?) ?? 0) / 1024).toStringAsFixed(0)} KB'
+            '${res['uploaded_at'] != null ? ' · uploaded ${'${res['uploaded_at']}'.substring(0, 16).replaceFirst('T', ' ')}' : ''}'
+            '\nUsed for job search, scoring, emails and applications'
+        : 'No resume on the server yet. Upload one to start.';
 
     return Scaffold(
       appBar: AppBar(title: const Text('Settings & Configuration')),
@@ -217,7 +320,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   autocorrect: false,
                   decoration: const InputDecoration(
                     labelText: 'Server URL',
-                    hintText: 'https://3-108-123-150.sslip.io',
+                    hintText: 'https://your-server.example.com',
                     prefixIcon: Icon(Icons.dns_rounded),
                   ),
                 ),
@@ -321,11 +424,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     child: const Icon(Icons.picture_as_pdf_rounded, size: 20, color: Color(0xFF38BDF8)),
                   ),
-                  title: const Text('Upload Resume (PDF)', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                  subtitle: const Text('Attached to cold emails and used for job match scoring',
-                      style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                  title: Text(res['exists'] == true ? 'Resume (replace)' : 'Upload Resume (PDF)',
+                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                  subtitle: Text(resumeText, style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                  isThreeLine: res['exists'] == true,
                   trailing: const Icon(Icons.upload_file_rounded, color: AppTheme.textSecondary, size: 20),
-                  onTap: _uploadResume,
+                  onTap: () => _uploadResume(naukriLinked: sessions['naukri'] == true),
                 ),
                 const Divider(height: 1),
                 ListTile(
@@ -344,29 +448,112 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   trailing: const Icon(Icons.chevron_right_rounded, color: AppTheme.textMuted),
                   onTap: () => context.push('/tools/verify_resume_pdf'),
                 ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          const SectionHeader(title: 'Linked Accounts', icon: Icons.link_rounded),
+          Container(
+            decoration: BoxDecoration(
+              color: AppTheme.card,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppTheme.borderSubtle),
+            ),
+            child: Column(
+              children: [
+                for (final (id, label, icon) in const [
+                  ('linkedin', 'LinkedIn', Icons.business_center_rounded),
+                  ('naukri', 'Naukri', Icons.work_rounded),
+                  ('indeed', 'Indeed', Icons.search_rounded),
+                ]) ...[
+                  ListTile(
+                    enabled: connected,
+                    leading: Icon(icon, color: sessions[id] == true ? AppTheme.successLight : AppTheme.textMuted),
+                    title: Text(label, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                    subtitle: Text(
+                      sessions[id] == true ? 'Linked · session saved on your server' : 'Not linked · sign in once in the remote browser',
+                      style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                    ),
+                    trailing: sessions[id] == true
+                        ? TextButton(onPressed: () => _unlink(id), child: const Text('Disconnect'))
+                        : FilledButton.tonal(
+                            onPressed: () => context.push('/tools/login_platform', extra: {'platform': id}),
+                            child: const Text('Link')),
+                  ),
+                  const Divider(height: 1),
+                ],
+                ListTile(
+                  enabled: connected,
+                  leading: Icon(Icons.mail_lock_rounded,
+                      color: creds['gmail_app_password'] == true ? AppTheme.successLight : AppTheme.textMuted),
+                  title: const Text('Gmail', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                  subtitle: Text(
+                    creds['gmail_app_password'] == true && gmailUser.isNotEmpty
+                        ? 'Linked · $gmailUser'
+                        : 'Not linked · emails and applications are sent from here',
+                    style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                  ),
+                  trailing: FilledButton.tonal(
+                      onPressed: () => _setGmail(gmailUser),
+                      child: Text(creds['gmail_app_password'] == true ? 'Change' : 'Link')),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          const SectionHeader(title: 'AI Post Analysis & Alerts', icon: Icons.auto_awesome_rounded),
+          Container(
+            decoration: BoxDecoration(
+              color: AppTheme.card,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppTheme.borderSubtle),
+            ),
+            child: Column(
+              children: [
+                ListTile(
+                  enabled: connected,
+                  leading: Icon(Icons.psychology_rounded,
+                      color: llm['ready'] == true ? AppTheme.successLight : AppTheme.textMuted),
+                  title: Text('AI provider: ${llm['provider'] ?? 'none'}',
+                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                  subtitle: Text(
+                    llm['ready'] == true
+                        ? 'Ready · hiring posts and your resume are analysed by AI'
+                        : '${llm['reason'] ?? 'Not set'} · set llm.provider in the profile',
+                    style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                  ),
+                ),
                 const Divider(height: 1),
                 ListTile(
                   enabled: connected,
-                  leading: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF472B6).withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(Icons.mail_lock_rounded, size: 20, color: Color(0xFFF472B6)),
-                  ),
-                  title: const Text('Gmail App Password', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                  leading: const Icon(Icons.vpn_key_rounded, color: AppTheme.primaryLight),
+                  title: const Text('Kiro API key', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                  subtitle: Text(creds['kiro_api_key'] == true ? 'Saved on server' : 'For llm.provider: kiro (Kiro Pro and above)',
+                      style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                  onTap: () => _setSecret('kiro_api_key', 'Kiro API key',
+                      'Generate an API key in your Kiro account settings. Used only to analyse posts and your resume.'),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  enabled: connected,
+                  leading: const Icon(Icons.key_rounded, color: AppTheme.primaryLight),
+                  title: const Text('Other AI API key', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                  subtitle: Text(creds['llm_api_key'] == true ? 'Saved on server' : 'For llm.provider: openai (DeepSeek, OpenRouter ...)',
+                      style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                  onTap: () => _setSecret('llm_api_key', 'AI API key', 'Key for the OpenAI-compatible API set in llm.base_url.'),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  enabled: connected,
+                  leading: const Icon(Icons.notifications_active_rounded, color: AppTheme.primaryLight),
+                  title: const Text('Telegram alerts', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                   subtitle: Text(
-                    creds['gmail_app_password'] == true ? 'Saved & ready on server' : 'Required for automated outreach',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: creds['gmail_app_password'] == true ? AppTheme.successLight : AppTheme.textSecondary,
-                    ),
-                  ),
-                  trailing: creds['gmail_app_password'] == true
-                      ? const Icon(Icons.check_circle_rounded, color: AppTheme.success, size: 20)
-                      : const Icon(Icons.add_circle_outline_rounded, color: AppTheme.primaryLight, size: 20),
-                  onTap: _setGmail,
+                      creds['telegram_bot_token'] == true
+                          ? 'Bot token saved · set notifications.telegram_chat_id in the profile'
+                          : 'Optional: message per matching hiring post',
+                      style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                  onTap: () => _setSecret('telegram_bot_token', 'Telegram bot token',
+                      'Create a bot with @BotFather and paste its token. Put your chat id in notifications.telegram_chat_id.'),
                 ),
               ],
             ),
@@ -392,13 +579,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                const Text(
+                Text(
                   '• Dry-run simulation by default on all tools\n'
-                  '• Daily hard caps: max 25 applications and 20 emails per day\n'
-                  '• 60-day company email deduplication window\n'
-                  '• Email outreach restricted to Mon–Sat, 09:00–19:00 IST\n'
+                  '• Daily caps on applications and emails (set in the profile)\n'
+                  '• One email per company per 60 days, opt-outs and bounces respected\n'
+                  '• Email send window: ${status?['send_window'] ?? 'any time, every day'}\n'
+                  '• Up to ${runs['max_parallel'] ?? 4} tasks run at the same time\n'
                   '• Instant kill-switch toggle from Home screen',
-                  style: TextStyle(fontSize: 12.5, color: AppTheme.textSecondary, height: 1.5),
+                  style: const TextStyle(fontSize: 12.5, color: AppTheme.textSecondary, height: 1.5),
                 ),
               ],
             ),

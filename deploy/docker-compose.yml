@@ -3,7 +3,10 @@
 #   docker compose up -d --build
 services:
   jobhub:
-    build: ../backend
+    build:
+      context: ../backend
+      args:
+        INSTALL_KIRO: "${JOBHUB_INSTALL_KIRO:-0}"   # 1 = include kiro-cli for LLM post analysis (needs KIRO_API_KEY in .env)
     image: agentic-job-seeker:latest
     restart: unless-stopped
     env_file: .env

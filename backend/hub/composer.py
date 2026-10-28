@@ -36,7 +36,7 @@ _cache = {}
 # ---------------------------------------------------------------- resume
 def resume_text(path: str) -> str:
     p = Path(path)
-    key = (str(p), p.stat().st_mtime if p.exists() else 0)
+    key = (str(p), p.stat().st_mtime if p.exists() else 0, p.stat().st_size if p.exists() else 0)
     if key not in _cache:
         text = ""
         # 1. Try pymupdf (pure Python, installed via requirements.txt, zero external binary dependency)
@@ -64,22 +64,43 @@ def resume_text(path: str) -> str:
     return _cache[key]
 
 
-def skills_in(text: str) -> list:
-    return [k for k, rx in SKILL_RX.items() if rx.search(text or "")]
+_custom_rx: dict = {}
+
+
+def custom_skills(profile: dict | None) -> dict:
+    """search.skills from the profile (filled from the resume) as {name: regex}, so scoring works for any field,
+    not only the built-in cloud/DevOps vocabulary."""
+    out = {}
+    for s in ((profile or {}).get("search") or {}).get("skills") or []:
+        name = str(s).strip()
+        if not name or name in SKILL_RX or len(name) > 40:
+            continue
+        if name not in _custom_rx:
+            _custom_rx[name] = re.compile(r"(?<![\w])" + re.escape(name).replace(r"\ ", r"\s+") + r"(?![\w])", re.I)
+        out[name] = _custom_rx[name]
+    return out
+
+
+def skills_in(text: str, profile: dict | None = None) -> list:
+    rx = {**SKILL_RX, **custom_skills(profile)}
+    return [k for k, r in rx.items() if r.search(text or "")]
 
 
 HEADINGS = ("PROFESSIONAL", "TECHNICAL", "FEATURED", "EDUCATION", "CERTIFICATIONS")
 
 
-def resume_bullets(text: str) -> list:
+BULLET = ("•", "●", "▪", "■", "◦", "–", "- ", "* ", "➢", "✓")
+
+
+def resume_bullets(text: str, profile: dict | None = None) -> list:
     """[{text, skills}] - each resume bullet, label prefix dropped ('Keyless CI/CD Automation: Built ...' -> 'Built ...')."""
     bullets, cur = [], None
     for line in text.splitlines():
         s = line.strip()
-        if s.startswith("•"):
+        if s.startswith(BULLET):
             if cur:
                 bullets.append(cur)
-            cur = s.lstrip("• ").strip()
+            cur = s.lstrip("•●▪■◦–-*➢✓ ").strip()
         elif cur is not None and s and not s.upper().startswith(HEADINGS) and not re.match(r".+\|.+", s) and len(cur) < 400:
             cur += " " + s
         else:
@@ -95,13 +116,13 @@ def resume_bullets(text: str) -> list:
         head, sep, rest = b.partition(": ")
         if sep and len(head) < 48 and rest[:1].isupper():
             b = rest
-        out.append({"text": b.strip(), "skills": skills_in(b)})
+        out.append({"text": b.strip(), "skills": skills_in(b, profile)})
     return out
 
 
 def resume_profile(profile: dict) -> dict:
     t = resume_text(profile["applicant"]["resume_path"])
-    return {"text": t, "skills": set(skills_in(t)), "bullets": resume_bullets(t)}
+    return {"text": t, "skills": set(skills_in(t, profile)), "bullets": resume_bullets(t, profile)}
 
 
 def sanitize_posting(text: str) -> tuple:
@@ -119,11 +140,11 @@ def sanitize_posting(text: str) -> tuple:
 
 
 # ---------------------------------------------------------------- JD parsing
-def parse_jd(title: str, company: str, jd: str) -> dict:
+def parse_jd(title: str, company: str, jd: str, profile: dict | None = None) -> dict:
     jd = jd or ""
     clean_jd, _ = sanitize_posting(jd)
     jd = clean_jd
-    skills = skills_in(jd)
+    skills = skills_in(jd, profile)
     yrs = None
     m = re.search(r"(\d{1,2})\s*(?:\+|-|–|to)?\s*(\d{1,2})?\s*(?:\+)?\s*(?:years|yrs)", jd, re.I)
     if m:
@@ -164,24 +185,27 @@ def compose(profile: dict, job: dict, source: str = "", recruiter: str = "", col
     """Build {subject, body, matched, bullets} for a job dict (title, company, description). Pure text, no sending."""
     a = profile["applicant"]
     rp = resume_profile(profile)
-    jd = parse_jd(job.get("title", ""), job.get("company", ""), job.get("description", ""))
+    jd = parse_jd(job.get("title", ""), job.get("company", ""), job.get("description", ""), profile)
     matched = [s for s in jd["skills"] if s in rp["skills"]]
     matched.sort(key=lambda k: -SKILL_WEIGHT.get(k, 1))
     top = matched[:3]
     bullets = [_short(b) for b in _pick_bullets(rp, matched)]
     exp = profile.get("experience") or {}
-    cur_title = exp.get("current_title") or "DevOps Engineer"
+    cur_title = exp.get("current_title") or ""
     cur_co = (exp.get("current_company") or "").rstrip(".")
     name_first = (recruiter or "").split(" ")[0]
     greet = f"Dear {name_first}," if name_first.isalpha() else "Dear Hiring Team,"
     where = f" as advertised on {source}" if source else ""
     role = jd["title"]
     co = jd["company"] or "your organisation"
-    intro = (f"I am writing to apply for the {role} position at {co}{where}. I am a {(profile.get('experience') or {}).get('role_label') or 'DevOps engineer'} "
-             f"based in {a['current_location']}"
-             + (f", currently working as {cur_title} at {cur_co}" if cur_co else "") + ".")
+    label = exp.get("role_label") or a.get("headline") or cur_title or "professional"
+    label = label.split("|")[0].strip()
+    article = "an" if label[:1].lower() in "aeiou" else "a"
+    intro = (f"I am writing to apply for the {role} position at {co}{where}. I am {article} {label}"
+             + (f" based in {a['current_location']}" if a.get("current_location") else "")
+             + (f", currently working as {cur_title} at {cur_co}" if cur_co and cur_title and cur_co.lower() != "your company" else "") + ".")
     fit = (f" Your requirements around {_join(top)} match the work I do." if top else
-           " The role aligns with my background in cloud infrastructure and CI/CD automation.")
+           " The role aligns closely with the experience described in my resume.")
     lines = [greet, "", intro + fit, "", "Relevant experience from my resume:"]
     lines += [f"- {b}" for b in bullets]
     covered = {k for b in rp["bullets"] if _short(b["text"]) in bullets for k in b["skills"]} | set(top)
@@ -240,22 +264,36 @@ def polish(body: str, url: str = "http://127.0.0.1:11434", model: str = "") -> s
         return body
 
 
+def _identity(profile: dict) -> str:
+    """'<title> at <company>' or the profile headline, e.g. 'Data Analyst at Acme' - nothing hardcoded."""
+    exp, a = profile.get("experience") or {}, profile.get("applicant") or {}
+    title = exp.get("current_title") or exp.get("role_label") or a.get("headline") or ""
+    co = (exp.get("current_company") or "").rstrip(".")
+    if co and co.lower() != "your company" and title:
+        return f"{title.split('/')[0].strip()} at {co}"
+    return title.split("|")[0].strip() or "professional"
+
+
 def compose_linkedin_pitch(profile: dict, jd_text: str = "", role: str = "", company: str = "", recruiter: str = "") -> str:
-    """Generate a short, tailored LinkedIn connection pitch (<= 300 chars) for Yash Jadhav."""
+    """Short, tailored LinkedIn connection note (<= 300 chars) built from the profile and the resume skills the JD asks for."""
     name_first = (recruiter or "").strip().split(" ")[0]
     greet = f"Hi {name_first}," if name_first.isalpha() else "Hello,"
-    role_str = role.strip() if role else "DevOps Engineer"
+    role_str = role.strip() or ((profile.get("search") or {}).get("keywords") or ["this"])[0]
     co_str = f" at {company.strip()}" if company else ""
-
-    pitch = (f"{greet} I came across the {role_str} role{co_str}. I'm a DevOps Engineer at Setoo working with "
-             f"AKS, Terraform & CI/CD. I can join immediately and would love to connect to discuss how I can contribute.")
+    try:
+        rp_skills = resume_profile(profile)["skills"]
+    except Exception:  # noqa: BLE001 - no resume yet
+        rp_skills = set()
+    jd_sk = skills_in(jd_text, profile) if jd_text else []
+    top = [k for k in jd_sk if k in rp_skills][:3] or sorted(rp_skills, key=lambda k: -SKILL_WEIGHT.get(k, 1))[:3]
+    skills = f" working with {_join(top)}" if top else ""
+    c = profile.get("compensation") or {}
+    join = " I can join immediately and" if c.get("notice_period_days") == 0 else ""
+    me = _identity(profile)
+    pitch = (f"{greet} I came across the {role_str} role{co_str}. I'm a {me}{skills}.{join} would love to connect "
+             f"to discuss how I can contribute.").replace(". would", ". I would")
     if len(pitch) > 300:
-        pitch = (f"{greet} Saw the {role_str} opening{co_str}. I'm a DevOps Engineer at Setoo (AKS, Terraform, CI/CD), "
-                 f"immediate joiner, and would love to connect.")
-    if len(pitch) > 300:
-        pitch = (f"{greet} DevOps Engineer at Setoo (AKS, Terraform, CI/CD), immediate joiner. "
-                 f"Would love to connect regarding {role_str}{co_str}.")
+        pitch = f"{greet} Saw the {role_str} opening{co_str}. I'm a {me}{skills}. Would love to connect."
     if len(pitch) > 300:
         pitch = pitch[:297] + "..."
     return pitch
-

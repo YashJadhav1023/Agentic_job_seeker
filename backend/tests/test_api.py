@@ -34,6 +34,7 @@ def tmp_profile(tmp_path, monkeypatch):
     monkeypatch.setenv("JOBHUB_PROFILE", str(p))
     monkeypatch.setattr(core, "PROFILE_PATH", p)
     monkeypatch.setattr(core, "SECRETS", tmp_path / "secrets")
+    monkeypatch.setattr(core, "ROOT", tmp_path)  # resume history / sandbox files stay in tmp
     (tmp_path / "secrets").mkdir()
     return p
 
@@ -173,3 +174,33 @@ def test_multi_board_search_filters_and_saves(tmp_profile):
     with core.db() as c:
         assert c.execute("SELECT source FROM jobs WHERE url='https://x/1'").fetchone()[0] == "jobspy-indeed"
     assert "error" in jobspy_tool.multi_board_search({"sites": ["monster"]}, scrape=fake)
+
+
+def test_resume_endpoints_and_profile_refresh(client, tmp_profile, tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "ROOT", tmp_path)  # history copies go to tmp
+    import composer
+    text = "ASHA RAO\nasha.rao@example.org\nSKILLS\nPython, SQL, Power BI\nEXPERIENCE\n" + "Built dashboards. " * 20
+    monkeypatch.setattr(composer, "resume_text", lambda path: text)
+    r = client.post("/api/v1/resume", headers=H, files={"file": ("Asha Rao CV.pdf", b"%PDF-1.4 new", "application/pdf")})
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["resume"]["original_filename"] == "Asha_Rao_CV.pdf" and j["resume"]["readable"]
+    assert j["profile_update"]["applied"] and "search.skills" in j["profile_update"]["changed"]
+    prof = core.load_profile()
+    assert prof["applicant"]["name"] == "Asha Rao" and prof["applicant"]["email"] == "asha.rao@example.org"
+    assert prof["search"]["skills"] == ["Python", "SQL", "Power BI"]
+    assert client.get("/api/v1/resume", headers=H).json()["attachment_name"] == "Asha_Rao_CV.pdf"
+    f = client.get("/api/v1/resume/file", headers=H)
+    assert f.status_code == 200 and f.content == b"%PDF-1.4 new"
+
+
+def test_link_gmail_account(client, tmp_profile, tmp_path):
+    assert client.put("/api/v1/accounts/gmail", headers=H, json={"email": "not-an-email"}).status_code == 422
+    assert client.put("/api/v1/accounts/gmail", headers=H, json={"email": "a@gmail.com", "app_password": "short"}).status_code == 422
+    r = client.put("/api/v1/accounts/gmail", headers=H,
+                   json={"email": "asha@gmail.com", "app_password": "abcd efgh ijkl mnop", "test": False})
+    assert r.status_code == 200 and "abcd" not in r.text
+    assert core.read_secret("gmail_app_password") == "abcdefghijklmnop"
+    acc = client.get("/api/v1/accounts", headers=H).json()
+    assert acc["gmail"] == {"user": "asha@gmail.com", "app_password": True}
+    assert set(acc["platforms"]) == {"linkedin", "naukri", "indeed"}

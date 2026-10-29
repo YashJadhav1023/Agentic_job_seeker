@@ -11,7 +11,7 @@ Safety rules for sending (WhatsApp bans numbers that send unwanted messages in b
     confirmation that the people expect your message (settings.recipients_expect_my_message);
   * daily cap (default 20, never more than 50), random 40-110 s pause between messages, send window honoured;
   * a number is contacted at most once per 30 days, numbers that are not on WhatsApp are skipped, opt-outs are final;
-  * every message ends with a one-line way to say stop.
+  * incoming opt-out keywords ("stop", etc.) are honoured and suppress future sends.
 Evolution Go is an unofficial client; using it can get the linked number restricted by WhatsApp. Use a separate number.
 """
 from __future__ import annotations
@@ -41,7 +41,7 @@ MAX_FILE_BYTES = 8 * 1024 * 1024
 STOP_RX = re.compile(r"^\W*(stop|unsubscribe|remove me|do not contact|don'?t contact|not interested|opt[ -]?out)\b", re.I)
 DEFAULT_TEMPLATE = ("Hi {name}, I'm {candidate}, a {role}. I'm looking for opportunities with {company} and my resume is "
                     "attached. I'd be glad to share anything else you need.")
-FOOTER = "\n\nReply STOP if you'd rather not hear from me."
+FOOTER = ""
 DEFAULTS = {"template": DEFAULT_TEMPLATE, "daily_cap": 20, "delay_sec": [40, 110], "recipients_expect_my_message": False,
             "default_country_code": "91", "watch_groups": [], "mode": "ask"}
 

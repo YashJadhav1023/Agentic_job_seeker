@@ -246,7 +246,7 @@ def test_preview_is_the_default_and_sends_nothing(env):
     add("Asha 98765 43210")
     r = server.whatsapp_send({})
     assert r["dry_run"] is True and r["would_send"] == 1
-    assert "Hi Asha" in r["drafts"][0]["message"] and "Reply STOP" in r["drafts"][0]["message"]
+    assert "Hi Asha" in r["drafts"][0]["message"] and "Reply STOP" not in r["drafts"][0]["message"]
     assert whatsapp.sent_today() == 0
 
 

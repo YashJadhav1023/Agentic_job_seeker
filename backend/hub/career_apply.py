@@ -909,8 +909,10 @@ def eligible(profile: dict, ids: list | None = None, limit: int | None = None, d
     blocklist = {str(x).lower() for x in c.get("company_blocklist") or []}
     for j in rows:
         comp = str(j.get("company") or "").lower()
-        if not is_company_page(j.get("url", "")) or any(b in comp for b in blocklist):
+        target = j.get("apply_url") if is_company_page(j.get("apply_url") or "") else j.get("url", "")
+        if not is_company_page(target) or any(b in comp for b in blocklist):
             continue
+        j = {**j, "board_url": j.get("url", ""), "url": target}  # the form filler opens the company page
         if not ids:
             if json.loads(j.get("jd_emails") or "[]"):
                 continue  # the posting itself asks for an email: the email path is the right channel

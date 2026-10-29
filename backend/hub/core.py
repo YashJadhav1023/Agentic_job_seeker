@@ -113,7 +113,21 @@ def db() -> sqlite3.Connection:
     CREATE TABLE IF NOT EXISTS form_attempts(
       id INTEGER PRIMARY KEY, job_id INTEGER, at TEXT, status TEXT, reason TEXT, screenshot TEXT, dry INTEGER DEFAULT 1);
     """)
+    _migrate(c)
     return c
+
+
+# columns added after the first release: (table, column, type)
+LATER_COLUMNS = [("jobs", "apply_url", "TEXT"), ("jobs", "resolve_note", "TEXT")]
+
+
+def _migrate(c: sqlite3.Connection) -> None:
+    for table, col, typ in LATER_COLUMNS:
+        if col not in {r[1] for r in c.execute(f"PRAGMA table_info({table})")}:
+            try:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+            except sqlite3.OperationalError:  # another process added it first
+                pass
 
 
 def kv_get(key: str, default=None):

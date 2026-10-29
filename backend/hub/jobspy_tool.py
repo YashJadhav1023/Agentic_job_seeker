@@ -61,10 +61,13 @@ def multi_board_search(a: dict, scrape=None) -> dict:
              "min_amount": _clean(r.get("min_amount")), "max_amount": _clean(r.get("max_amount")),
              "emails": _clean(r.get("emails"))}
         if a.get("save") and j["url"]:
+            direct = _clean(r.get("job_url_direct")) or ""
+            site = _clean(r.get("company_url_direct")) or ""
             if autopilot.save_job({"source": f"jobspy-{j['site']}", "ext_id": str(_clean(r.get("id")) or ""),
                                    "url": j["url"], "title": title, "company": j["company"] or "",
                                    "location": j["location"] or "", "posted": str(j["posted"] or ""),
-                                   "description": _clean(r.get("description")) or "", "apply_type": "unknown"}):
+                                   "description": _clean(r.get("description")) or "", "apply_type": "unknown",
+                                   "apply_url": str(direct), "company_site": str(site)}):
                 saved += 1
         jobs.append(j)
     return {"query": term, "location": location, "sites": sites, "count": len(jobs),

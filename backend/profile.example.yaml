@@ -82,6 +82,11 @@ autopilot:
   scan_posts: false               # also scan LinkedIn hiring posts during each autopilot run
   use_jobspy: false               # also pull jobs from JobSpy (LinkedIn guest API, Naukri, Indeed; no login)
   career_apply: true              # fill + submit application forms of good jobs on company career pages
+  career_resolve: true            # for board jobs (LinkedIn/Indeed/Naukri/Google) find the same role on the company's own
+                                  # site first: board's direct link, public ATS (Greenhouse/Lever/Ashby/SmartRecruiters/
+                                  # Workable), web search, then the careers page via Firecrawl. Not found -> email.
+  career_resolve_max_per_run: 15
+  career_resolve_firecrawl: true  # uses Firecrawl credits; false = free sources only
   career_apply_max_per_run: 3     # forms per autopilot run
   career_apply_max_per_day: 5     # forms per day (also counts toward limits.max_applies_per_day_total)
   career_apply_company_days: 30   # at most one form per company within this many days

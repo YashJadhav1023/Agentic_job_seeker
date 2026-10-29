@@ -38,7 +38,8 @@ DEFAULTS = {"min_score": 45, "max_discover": 30, "per_query": 8, "max_emails_per
             "max_search_queries": 6, "career_apply": True, "career_apply_max_per_day": 5, "career_apply_max_per_run": 3,
             "career_apply_company_days": 30, "career_apply_retry_days": 3, "career_apply_max_attempts": 2,
             "scan_posts": False, "use_jobspy": False, "jobspy_sites": [], "schedule_every_hours": 0,
-            "company_blocklist": ["jobgether"], "max_years_tolerance": 1, "polish_model": "", "max_lookups": 15}
+            "company_blocklist": ["jobgether"], "max_years_tolerance": 1, "polish_model": "", "max_lookups": 15,
+            "career_resolve": True, "career_resolve_max_per_run": 15, "career_resolve_firecrawl": True}
 DAY_NAMES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 
@@ -84,10 +85,10 @@ def save_job(j: dict) -> bool:
     with core.db() as c:
         cur = c.execute(
             "INSERT OR IGNORE INTO jobs(source,ext_id,url,title,company,location,posted,description,company_site,recruiter,apply_type,"
-            "jd_emails,status,found_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "jd_emails,status,found_at,updated_at,apply_url) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (j["source"], j.get("ext_id", ""), j["url"], j.get("title", ""), j.get("company", ""), j.get("location", ""),
              j.get("posted", ""), j.get("description", ""), j.get("company_site", ""), j.get("recruiter", ""),
-             j.get("apply_type", "unknown"), json.dumps(emails), "new", core.now_iso(), core.now_iso()))
+             j.get("apply_type", "unknown"), json.dumps(emails), "new", core.now_iso(), core.now_iso(), j.get("apply_url", "")))
         inserted = cur.rowcount > 0
     for e in emails:
         dom = contacts.domain_of(e)
@@ -454,6 +455,21 @@ def pick_contact(profile: dict, c: dict, job: dict, restricted: bool) -> dict:
     return {}
 
 
+def known_contact(job: dict) -> dict:
+    """The contact an earlier run already picked for this job (stored on jobs.contact and in hr_contacts), unless it
+    has since bounced or opted out."""
+    email = (job.get("contact") or "").strip().lower()
+    if not email or job.get("status") != "queued":
+        return {}
+    with core.db() as db:
+        if db.execute("SELECT 1 FROM suppression WHERE key IN (?,?)", (email, contacts.domain_of(email))).fetchone():
+            return {}
+        row = db.execute("SELECT confidence, kind FROM hr_contacts WHERE lower(email)=?", (email,)).fetchone()
+    if not row:
+        return {}
+    return {"email": email, "confidence": row["confidence"] or "medium", "source": row["kind"] or "site"}
+
+
 def email_phase(profile: dict, c: dict, dry: bool, job_ids: list | None = None) -> dict:
     h = profile["hr_outreach"]
     out = {"emailed": 0, "dry_drafts": [], "no_contact": 0, "deferred": 0, "skipped_dupe": 0, "lookups": 0}
@@ -472,15 +488,18 @@ def email_phase(profile: dict, c: dict, dry: bool, job_ids: list | None = None) 
                 f"SELECT * FROM jobs WHERE id IN ({q}) AND status IN ('scored','queued','no_contact','error','skip') ORDER BY score DESC", job_ids)]
         else:
             jobs = [dict(r) for r in db.execute("SELECT * FROM jobs WHERE status IN ('scored','queued') ORDER BY score DESC")]
+    lookup_cap = max(c["max_lookups"], len(job_ids)) if job_ids else c["max_lookups"]
     for j in jobs:
         if out["emailed"] + len(out["dry_drafts"]) >= budget or stopped():
             break
         restricted = bool(platform_blocked(j["source"]))
-        if out["lookups"] >= c["max_lookups"] and not json.loads(j.get("jd_emails") or "[]"):
-            out["deferred"] += 1  # contact lookup (web search + SMTP probes) is slow; continue next run
-            continue
-        out["lookups"] += 1
-        ct = pick_contact(profile, c, j, restricted)
+        ct = known_contact(j)  # found on an earlier run (e.g. held back by the send window): no new lookup
+        if not ct:
+            if out["lookups"] >= lookup_cap and not json.loads(j.get("jd_emails") or "[]"):
+                out["deferred"] += 1  # contact lookup (web search + SMTP probes) is slow; continue next run
+                continue
+            out["lookups"] += 1
+            ct = pick_contact(profile, c, j, restricted)
         if not ct:
             if json.loads(j.get("jd_emails") or "[]") or restricted or j["apply_type"] != "easy":
                 set_job(j["id"], status="no_contact", reason="no verified contact")
@@ -605,6 +624,10 @@ def run(opts: dict) -> dict:
             q = ",".join("?" * len(job_ids))
             db.execute(f"UPDATE jobs SET status='scored', reason='picked by user' "
                        f"WHERE id IN ({q}) AND status IN ('skip','no_contact','error','new')", job_ids)
+    if opts.get("form", True) and c.get("career_resolve", True) and not stopped():
+        import career_resolve
+        summary["career_resolve"] = career_resolve.resolve_phase(
+            job_ids or None, int(c.get("career_resolve_max_per_run", 15)), use_firecrawl=bool(c.get("career_resolve_firecrawl", True)))
     if opts.get("form", True) and not stopped():
         summary["career_apply"] = form_phase(p, c, dry, job_ids or None)
     if opts.get("email", True) and not stopped():

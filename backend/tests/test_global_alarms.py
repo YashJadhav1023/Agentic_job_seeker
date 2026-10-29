@@ -337,11 +337,11 @@ def test_signed_in_session_needs_the_sign_in_cookie(tmp_path, monkeypatch):
     d = tmp_path / ".profiles" / "linkedin" / "Default"
     d.mkdir(parents=True)
     con = sqlite3.connect(d / "Cookies")
-    con.execute("CREATE TABLE cookies(name TEXT, value TEXT)")
-    con.execute("INSERT INTO cookies VALUES('JSESSIONID','x')")
+    con.execute("CREATE TABLE cookies(name TEXT, value TEXT, expires_utc INTEGER, creation_utc INTEGER, last_update_utc INTEGER)")
+    con.execute("INSERT INTO cookies VALUES('JSESSIONID','x',0,1,1)")
     con.commit()
     assert server._has_session("linkedin") is False          # Chrome was opened but nobody signed in
-    con.execute("INSERT INTO cookies VALUES('li_at','x')")
+    con.execute("INSERT INTO cookies VALUES('li_at','x',0,1,1)")
     con.commit()
     con.close()
     assert server._has_session("linkedin") is True

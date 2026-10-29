@@ -255,7 +255,11 @@ TOOLS = {
                       _s("", id={"type": "string"}, tasks={"type": "array", "items": {"type": "string"}}, dry_run={"type": "boolean"},
                          auto_apply={"type": "boolean"}, bulk_limit={"type": "integer", "minimum": 1, "maximum": 100})),
     "whatsapp_status": ("WhatsApp: is the gateway running, is the number linked, settings, contact counts, sent today and the daily cap.", _s("")),
-    "whatsapp_link": ("Link your WhatsApp number: returns a QR code (data URL) to scan from the phone (Linked devices). Call again until state is linked.", _s("")),
+    "whatsapp_link": ("Link your WhatsApp number: returns a QR code (data URL) to scan from the phone (Linked devices). Call again until "
+                      "state is linked. With phone (the WhatsApp number, with country code) it returns an 8-character pairing code to "
+                      "type in WhatsApp > Linked devices > Link with phone number instead (for when the app and WhatsApp are on the "
+                      "same phone); then poll whatsapp_status.",
+                      _s("", phone={"type": "string", "description": "WhatsApp number to link with a code instead of a QR"})),
     "whatsapp_unlink": ("Log the linked WhatsApp number out of the gateway.", _s("")),
     "whatsapp_settings": ("Message template ({name} {candidate} {role} {company}), daily cap (max 50), pause range, default country code, and "
                           "recipients_expect_my_message (must be true before any live send).",
@@ -575,9 +579,9 @@ def whatsapp_status(_):
     return whatsapp.status()
 
 
-def whatsapp_link(_):
+def whatsapp_link(a):
     import whatsapp
-    return whatsapp.link()
+    return whatsapp.link(phone=str((a or {}).get("phone") or ""))
 
 
 def whatsapp_unlink(_):

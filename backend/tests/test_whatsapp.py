@@ -46,6 +46,8 @@ class FakeGateway:
             return Resp({"message": "success"})
         if path == "instance/qr":
             return Resp({"message": "success", "data": {"qrcode": "data:image/png;base64,AAAA|2@abc", "code": "2@abc"}})
+        if path == "instance/pair":
+            return Resp({"message": "success", "data": {"PairingCode": "WXYZ-1234"}})
         if path == "user/check":
             nums = json["number"]
             ok = self.on_whatsapp if self.on_whatsapp is not None else nums
@@ -212,6 +214,18 @@ def test_link_reports_waiting_while_no_qr_yet(env):
             return super().__call__(method, url, **kw)
     r = whatsapp.link(whatsapp.Evo(http=NoQr(logged_in=False)))
     assert r["state"] == "waiting" and "error" not in r
+
+
+def test_link_with_phone_number_returns_a_pairing_code(env, monkeypatch):
+    monkeypatch.setattr(whatsapp.time, "sleep", lambda s: None)
+    gw = FakeGateway(logged_in=False)
+    r = whatsapp.link(whatsapp.Evo(http=gw), phone="+91 98765 43210")
+    assert r["state"] == "code" and r["code"] == "WXYZ-1234" and "Link with phone number" in r["note"]
+    pair = next(c for c in gw.calls if c[1] == "/instance/pair")
+    assert pair[3]["phone"] == "919876543210" and "/instance/qr" not in [c[1] for c in gw.calls]
+    assert "error" in whatsapp.link(whatsapp.Evo(http=FakeGateway(logged_in=False)), phone="12345")
+    monkeypatch.setattr(whatsapp, "link", lambda evo=None, phone="": {"phone": phone})
+    assert server.whatsapp_link({"phone": "98765 43210"}) == {"phone": "98765 43210"} and server.whatsapp_link({}) == {"phone": ""}
 
 
 def test_link_when_already_linked_and_when_not_configured(env, monkeypatch):

@@ -10,9 +10,11 @@ ROOT = Path(__file__).resolve().parent.parent
 os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(ROOT / ".browsers"))
 URLS = {"naukri": "https://www.naukri.com/nlogin/login", "indeed": "https://secure.indeed.com/auth?hl=en_IN&co=IN",
         "linkedin": "https://www.linkedin.com/login"}
-# Cookie that only exists once you are signed in. Indeed has no stable one, so it relies on you closing the window.
-SIGNED_IN = {"linkedin": "li_at", "naukri": "nauk_at"}
+# Cookies that only exist once you are signed in (any one is enough). Indeed sets PPID (its login passport) after
+# every sign-in method; Naukri's nauk_at lives one hour and is renewed from the one-year nauk_rt.
+SIGNED_IN = {"linkedin": ("li_at",), "naukri": ("nauk_at", "nauk_rt"), "indeed": ("PPID", "SHOE")}
 WAIT_MAX = 15 * 60
+CHROME_EPOCH = 11644473600  # Chrome stores times as microseconds since 1601-01-01
 
 
 def in_container() -> bool:
@@ -21,7 +23,14 @@ def in_container() -> bool:
     return Path("/.dockerenv").exists() or os.environ.get("JOBHUB_TRUST_PROXY") == "1"
 
 
-def has_cookie(profile: Path, name: str) -> bool:
+def has_cookie(profile: Path, name, since: float = 0) -> bool:
+    """True if any of `name` (a name or tuple of names) is stored and not expired. With `since` (unix time) the cookie
+    must also have been written after it, so an old session does not count as a new sign-in."""
+    names = (name,) if isinstance(name, str) else tuple(name)
+    now_c = int((time.time() + CHROME_EPOCH) * 1_000_000)
+    since_c = int((since + CHROME_EPOCH) * 1_000_000) if since else 0
+    q = (f"SELECT 1 FROM cookies WHERE name IN ({','.join('?' * len(names))}) AND (expires_utc=0 OR expires_utc>?) "
+         "AND MAX(creation_utc, last_update_utc)>=? LIMIT 1")
     for db in (profile / "Default" / "Network" / "Cookies", profile / "Default" / "Cookies"):
         if not db.exists():
             continue
@@ -30,7 +39,8 @@ def has_cookie(profile: Path, name: str) -> bool:
             shutil.copyfile(db, tmp)  # Chrome keeps the live file locked
             con = sqlite3.connect(tmp)
             try:
-                return con.execute("SELECT 1 FROM cookies WHERE name=? LIMIT 1", (name,)).fetchone() is not None
+                if con.execute(q, (*names, now_c, since_c)).fetchone() is not None:
+                    return True
             finally:
                 con.close()
         except (OSError, sqlite3.Error):
@@ -61,9 +71,13 @@ def main(platform: str) -> int:
         args += ["--no-sandbox", "--test-type"]
     proc = subprocess.Popen(args + [URLS[platform]], stdin=subprocess.DEVNULL)
     cookie, seen_at = SIGNED_IN.get(platform), None
+    if cookie and has_cookie(d, cookie):
+        print(f"you are already signed in to {platform}; sign in again in the window to refresh the session, "
+              "or close it", flush=True)
+    start_c = t0 - 2  # only a cookie written during THIS window counts as signing in (an old one closed it at once)
     while proc.poll() is None and time.time() - t0 < WAIT_MAX:
         time.sleep(2)
-        if cookie and seen_at is None and has_cookie(d, cookie):
+        if cookie and seen_at is None and has_cookie(d, cookie, since=start_c):
             seen_at = time.time()
             print(f"signed in to {platform} - saving the session", flush=True)
         if seen_at and time.time() - seen_at > 8:  # let Chrome flush the cookie store, then close the window
@@ -77,6 +91,9 @@ def main(platform: str) -> int:
         # An old saved session must not hide a crash: before, a Chrome abort still reported success.
         print("ERROR: Chrome closed immediately - the browser profile may be locked or the display is not running. "
               "Try again; if it repeats, check hub_status.chromium_installed.", flush=True)
+        return 1
+    if cookie and not has_cookie(d, cookie):
+        print(f"ERROR: not signed in to {platform} (window closed or timed out before signing in). Try again.", flush=True)
         return 1
     if not saved(d):
         print("ERROR: no login session was saved (window closed before signing in?). Try again.", flush=True)

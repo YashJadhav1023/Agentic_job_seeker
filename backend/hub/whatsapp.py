@@ -173,6 +173,14 @@ class Evo:
     def logout(self) -> None:
         self._call("DELETE", "/instance/logout")
 
+    def pair(self, phone: str) -> str:
+        """Pairing code for 'Link with phone number instead' (no QR scan needed). -> e.g. 'ABCD-EFGH'."""
+        d = self._call("POST", "/instance/pair", json={"phone": phone, "subscribe": ["MESSAGE"]}) or {}
+        code = str(_g(d, "PairingCode", "pairingCode", "code") or "")
+        if not code:
+            raise EvoError("the gateway returned no pairing code")
+        return code
+
     def check(self, numbers: list) -> dict:
         d = self._call("POST", "/user/check", json={"number": numbers, "formatJid": True}) or {}
         users = d.get("Users") if isinstance(d, dict) else d
@@ -231,8 +239,10 @@ def status(evo: Evo | None = None) -> dict:
     return out
 
 
-def link(evo: Evo | None = None) -> dict:
-    """Idempotent: creates the instance, starts the connection and returns the current QR image until linked."""
+def link(evo: Evo | None = None, phone: str = "") -> dict:
+    """Idempotent: creates the instance, starts the connection and returns the current QR image until linked.
+    With `phone` (the WhatsApp number to link, any format) it returns an 8-character pairing code instead, for when
+    WhatsApp and this app are on the same phone and a QR on the screen cannot be scanned."""
     if not configured():
         return {"error": "The WhatsApp gateway is not configured. It needs COMPOSE_PROFILES=whatsapp and JOBHUB_EVOLUTION_KEY."}
     evo = evo or Evo()
@@ -241,6 +251,21 @@ def link(evo: Evo | None = None) -> dict:
         st = evo.status()
         if st["logged_in"]:
             return {"state": "linked", "name": st["name"]}
+        if phone:
+            num = normalize(phone)
+            if not num:
+                return {"error": "enter the WhatsApp number with country code, e.g. +91 98765 43210"}
+            if not st["connected"] and not core.kv_get("whatsapp:last_connect"):
+                try:
+                    evo.connect()  # first link ever: registers the webhook (the gateway keeps it per instance)
+                    time.sleep(3)
+                except EvoError:
+                    pass
+            core.kv_set("whatsapp:last_connect", time.time())  # QR polling must not restart the client now
+            code = evo.pair(num)
+            return {"state": "code", "code": code, "number": num, "note":
+                    "On this phone open WhatsApp > Settings > Linked devices > Link a device > 'Link with phone number "
+                    f"instead', and type the code {code}. It is valid for about 3 minutes."}
         # The app polls this every few seconds. Each /instance/connect makes the gateway start a fresh client, which
         # throws away the QR the user is scanning and leaks database connections (it ran Postgres out of clients).
         # So connect only when the gateway has no live connection, and at most once per CONNECT_EVERY seconds.

@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../api/client.dart';
@@ -27,6 +28,8 @@ class WhatsAppScreen extends ConsumerStatefulWidget {
 
 class _WhatsAppScreenState extends ConsumerState<WhatsAppScreen> {
   String? _qr;
+  String? _code;
+  String _phone = '';
   String _linkNote = '';
   bool _linking = false;
   Timer? _poll;
@@ -90,6 +93,90 @@ class _WhatsAppScreenState extends ConsumerState<WhatsAppScreen> {
 
     await step();
     if (_linking) _poll = Timer.periodic(const Duration(seconds: 4), (_) => step());
+  }
+
+  /// Same-phone linking: WhatsApp cannot scan a QR shown on its own screen, so ask for a pairing code instead.
+  Future<void> _linkWithCode() async {
+    final ctl = TextEditingController(text: _phone);
+    final phone = await showDialog<String>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Link with phone number'),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Use this when WhatsApp is on this same phone. Enter the WhatsApp number to link, with country code.',
+              style: TextStyle(fontSize: 13)),
+          const SizedBox(height: 12),
+          TextField(
+            controller: ctl,
+            autofocus: true,
+            keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(labelText: 'WhatsApp number', hintText: '+91 98765 43210'),
+          ),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(c, ctl.text.trim()), child: const Text('Get code')),
+        ],
+      ),
+    );
+    if (phone == null || phone.isEmpty || !mounted) return;
+    _poll?.cancel();
+    setState(() {
+      _phone = phone;
+      _linking = true;
+      _qr = null;
+      _code = null;
+      _linkNote = 'Asking WhatsApp for a code…';
+    });
+    try {
+      final r = await _tool('whatsapp_link', {'phone': phone});
+      if (!mounted) return;
+      if (r['state'] == 'linked') {
+        ref.invalidate(whatsappProvider);
+        setState(() {
+          _linking = false;
+          _linkNote = 'Linked as ${r['name'] ?? 'your number'}.';
+        });
+        return;
+      }
+      if (r['error'] != null) throw ApiException('${r['error']}');
+      setState(() {
+        _code = '${r['code']}';
+        _linkNote = '${r['note'] ?? ''}';
+      });
+      // wait for the user to type the code in WhatsApp
+      var waited = 0;
+      _poll = Timer.periodic(const Duration(seconds: 4), (t) async {
+        waited += 4;
+        try {
+          final s = await _tool('whatsapp_status');
+          if (!mounted) return;
+          if (s['linked'] == true) {
+            t.cancel();
+            ref.invalidate(whatsappProvider);
+            setState(() {
+              _linking = false;
+              _code = null;
+              _linkNote = 'Linked as ${s['name'] ?? 'your number'}.';
+            });
+          } else if (waited >= 180) {
+            t.cancel();
+            setState(() {
+              _linking = false;
+              _code = null;
+              _linkNote = 'The code expired. Tap "Link with phone number" for a new one.';
+            });
+          }
+        } catch (_) {}
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _linking = false;
+          _linkNote = '$e';
+        });
+      }
+    }
   }
 
   Future<void> _upload() async {
@@ -215,6 +302,36 @@ class _WhatsAppScreenState extends ConsumerState<WhatsAppScreen> {
                         padding: const EdgeInsets.only(top: 8),
                         child: Text('${s['gateway_error']}. If it says 503, finish the one-time license registration in the gateway Manager page.',
                             style: const TextStyle(color: AppTheme.warningLight, fontSize: 12.5)),
+                      ),
+                    if (configured && !linked)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            onPressed: _linking && _code != null ? null : _linkWithCode,
+                            icon: const Icon(Icons.dialpad_rounded, size: 18),
+                            label: const Text('WhatsApp on this phone? Link with phone number'),
+                          ),
+                        ),
+                      ),
+                    if (_code != null)
+                      Center(
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 12),
+                          child: Column(children: [
+                            SelectableText(_code!,
+                                style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w800, letterSpacing: 4, fontFamily: 'monospace')),
+                            TextButton.icon(
+                              onPressed: () {
+                                Clipboard.setData(ClipboardData(text: _code!.replaceAll('-', '')));
+                                _snack('Code copied');
+                              },
+                              icon: const Icon(Icons.copy_rounded, size: 18),
+                              label: const Text('Copy code'),
+                            ),
+                          ]),
+                        ),
                       ),
                     if (_qr != null)
                       Center(

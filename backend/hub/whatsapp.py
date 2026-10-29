@@ -34,6 +34,7 @@ import requests
 import core
 
 TIMEOUT = 30
+CONNECT_EVERY = 60  # seconds between /instance/connect calls while waiting for a QR scan
 HARD_DAILY_CAP = 50
 REPEAT_DAYS = 30
 MAX_FILE_BYTES = 8 * 1024 * 1024
@@ -240,11 +241,22 @@ def link(evo: Evo | None = None) -> dict:
         st = evo.status()
         if st["logged_in"]:
             return {"state": "linked", "name": st["name"]}
+        # The app polls this every few seconds. Each /instance/connect makes the gateway start a fresh client, which
+        # throws away the QR the user is scanning and leaks database connections (it ran Postgres out of clients).
+        # So connect only when the gateway has no live connection, and at most once per CONNECT_EVERY seconds.
+        last = float(core.kv_get("whatsapp:last_connect", 0) or 0)
+        if not st["connected"] and time.time() - last >= CONNECT_EVERY:
+            core.kv_set("whatsapp:last_connect", time.time())
+            try:
+                evo.connect()
+            except EvoError:
+                pass  # already connecting
         try:
-            evo.connect()
-        except EvoError:
-            pass  # already connecting
-        q = evo.qr()
+            q = evo.qr()
+        except EvoError as e:
+            if e.status in (400, 404):  # no QR generated yet
+                return {"state": "waiting", "qr": "", "note": "Starting the connection, ask again in a few seconds."}
+            raise
         if q["passkey"]:
             return {"state": "passkey", "note": "WhatsApp asks for a passkey for this account. Use another account or open the Manager page."}
         return {"state": "scan" if q["image"] else "waiting", "qr": q["image"], "note":

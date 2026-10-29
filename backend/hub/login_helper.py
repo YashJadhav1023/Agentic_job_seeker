@@ -15,6 +15,12 @@ SIGNED_IN = {"linkedin": "li_at", "naukri": "nauk_at"}
 WAIT_MAX = 15 * 60
 
 
+def in_container() -> bool:
+    if os.environ.get("JOBHUB_CHROME_SANDBOX") == "1":
+        return False
+    return Path("/.dockerenv").exists() or os.environ.get("JOBHUB_TRUST_PROXY") == "1"
+
+
 def has_cookie(profile: Path, name: str) -> bool:
     for db in (profile / "Default" / "Network" / "Cookies", profile / "Default" / "Cookies"):
         if not db.exists():
@@ -46,9 +52,14 @@ def main(platform: str) -> int:
     d.mkdir(parents=True, exist_ok=True)
     print(f"Log in to {platform} in the window; it closes by itself once you are signed in.", flush=True)
     t0 = time.time()
-    proc = subprocess.Popen([exe, f"--user-data-dir={d}", "--password-store=basic", "--no-first-run",
-                             "--no-default-browser-check", "--window-position=0,0", "--window-size=1280,880",
-                             "--new-window", URLS[platform]], stdin=subprocess.DEVNULL)
+    args = [exe, f"--user-data-dir={d}", "--password-store=basic", "--no-first-run",
+            "--no-default-browser-check", "--window-position=0,0", "--window-size=1280,880", "--new-window"]
+    if in_container():
+        # Docker's default seccomp profile blocks the user namespaces Chrome's sandbox needs, so Chrome aborts with
+        # "No usable sandbox" and the remote browser shows an empty desktop. The container is the isolation boundary
+        # here (same default Playwright uses when it launches Chromium).
+        args += ["--no-sandbox", "--test-type"]
+    proc = subprocess.Popen(args + [URLS[platform]], stdin=subprocess.DEVNULL)
     cookie, seen_at = SIGNED_IN.get(platform), None
     while proc.poll() is None and time.time() - t0 < WAIT_MAX:
         time.sleep(2)
@@ -62,7 +73,8 @@ def main(platform: str) -> int:
         proc.wait(timeout=15)
     except subprocess.TimeoutExpired:
         proc.kill()
-    if time.time() - t0 < 5 and not saved(d):
+    if time.time() - t0 < 5 and (proc.returncode not in (0, None) or not saved(d)):
+        # An old saved session must not hide a crash: before, a Chrome abort still reported success.
         print("ERROR: Chrome closed immediately - the browser profile may be locked or the display is not running. "
               "Try again; if it repeats, check hub_status.chromium_installed.", flush=True)
         return 1

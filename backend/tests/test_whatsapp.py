@@ -178,6 +178,42 @@ def test_link_creates_instance_once_connects_and_returns_the_qr(env):
     assert "/instance/create" not in [c[1] for c in gw2.calls]   # not created twice
 
 
+def test_link_polling_does_not_reconnect_and_reset_the_qr(env, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(whatsapp.time, "time", lambda: clock[0])
+    gw = FakeGateway(logged_in=False)
+    evo = whatsapp.Evo(http=gw)
+    for _ in range(5):                      # the app polls every 4 s
+        whatsapp.link(evo)
+        clock[0] += 4
+    assert [c[1] for c in gw.calls].count("/instance/connect") == 1
+    clock[0] += whatsapp.CONNECT_EVERY
+    whatsapp.link(evo)
+    assert [c[1] for c in gw.calls].count("/instance/connect") == 2   # retried after the interval
+
+
+def test_link_does_not_connect_when_gateway_already_connected(env):
+    class Waiting(FakeGateway):
+        def __call__(self, method, url, **kw):
+            if url.endswith("/instance/status"):
+                self.calls.append((method, "/instance/status", None, None, None, None))
+                return Resp({"data": {"Connected": True, "LoggedIn": False}})
+            return super().__call__(method, url, **kw)
+    gw = Waiting()
+    assert whatsapp.link(whatsapp.Evo(http=gw))["state"] == "scan"
+    assert "/instance/connect" not in [c[1] for c in gw.calls]
+
+
+def test_link_reports_waiting_while_no_qr_yet(env):
+    class NoQr(FakeGateway):
+        def __call__(self, method, url, **kw):
+            if url.endswith("/instance/qr"):
+                return Resp({"error": "no QR code available"}, 400)
+            return super().__call__(method, url, **kw)
+    r = whatsapp.link(whatsapp.Evo(http=NoQr(logged_in=False)))
+    assert r["state"] == "waiting" and "error" not in r
+
+
 def test_link_when_already_linked_and_when_not_configured(env, monkeypatch):
     assert whatsapp.link(whatsapp.Evo(http=FakeGateway(logged_in=True))) == {"state": "linked", "name": "Yash"}
     monkeypatch.delenv("JOBHUB_EVOLUTION_URL")

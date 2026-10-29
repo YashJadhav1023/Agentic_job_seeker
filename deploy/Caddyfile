@@ -14,6 +14,14 @@
 	handle_path /browser/* {
 		forward_auth jobhub:8000 {
 			uri /internal/browser-auth
+			# The auth check must be a plain GET. Without this the noVNC websocket's Upgrade headers are copied onto
+			# it, the API sees a websocket handshake for a route that has none and answers 403, and noVNC stays on
+			# its "Connect" page instead of showing the sign-in browser.
+			header_up -Upgrade
+			header_up -Connection
+			header_up -Sec-WebSocket-Key
+			header_up -Sec-WebSocket-Version
+			header_up -Sec-WebSocket-Extensions
 		}
 		reverse_proxy jobhub:6080
 	}

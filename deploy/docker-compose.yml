@@ -32,6 +32,9 @@ services:
     profiles: ["whatsapp"]
     image: postgres:16-alpine
     restart: unless-stopped
+    # Evolution Go leaves idle connections behind on every reconnect; at the default limit of 100 the gateway could no
+    # longer create the WhatsApp client ("too many clients already") and the QR never connected.
+    command: ["postgres", "-c", "max_connections=200", "-c", "idle_session_timeout=600000"]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: "${EVOLUTION_DB_PASSWORD:-}"

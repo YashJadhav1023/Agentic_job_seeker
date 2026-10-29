@@ -144,3 +144,75 @@ def test_facts_accept_education_as_one_line():
     assert f["university"] == "V.V.P Institute of Technology" and f["grad_year"] == "2025" and f["gpa"] == "6.84"
     assert career_apply.facts({"applicant": {"education": {"degree": "BE"}}})["degree"] == "BE"
     assert career_apply.facts({"applicant": {}})["degree"] == ""
+
+
+# ---------------------------------------------------------------- freehire (open catalogue of company career-page jobs)
+FH = {"data": [
+    {"title": "DevOps Engineer", "company": "Comscore, Inc.", "location": "IND - Pune, India", "source": "workday",
+     "url": "https://comscore.wd5.myworkdayjobs.com/External/job/IND---Pune-India/DevOps_R1234?utm_source=freehire.me",
+     "description": "Kubernetes", "posted_at": "2026-10-28T10:00:00Z", "closed_at": None, "external_id": "R1234",
+     "cities": ["Pune"], "work_mode": "onsite"},
+    {"title": "DevOps Engineer", "company": "TransUnion", "location": "Chennai", "source": "workday", "cities": ["Chennai"],
+     "url": "https://transunion.wd5.myworkdayjobs.com/x/job/Chennai/DevOps_R9?utm_source=freehire.me", "closed_at": None},
+    {"title": "Senior DevOps Engineer", "company": "Acme", "location": "Pune", "cities": ["Pune"],
+     "url": "https://jobs.lever.co/acme/1", "closed_at": None},
+    {"title": "Site Reliability Engineer", "company": "Gone", "location": "Bengaluru", "cities": ["Bengaluru"],
+     "url": "https://jobs.lever.co/gone/2", "closed_at": "2026-10-20T00:00:00Z"},
+    {"title": "Site Reliability Engineer", "company": "Teikametrics", "location": "Bangalore / Remote", "cities": [],
+     "work_mode": "remote", "url": "https://job-boards.greenhouse.io/teikametrics/jobs/4361177009", "closed_at": None}]}
+
+
+@pytest.fixture
+def fh_prof(prof):
+    return {**prof, "search": {**prof["search"], "locations": ["Pune", "Bangalore", "Remote"]}}
+
+
+def test_freehire_search_asks_for_company_sources_only():
+    seen = {}
+
+    def get(url, params=None, **k):
+        seen.update(url=url, params=params)
+        return SimpleNamespace(status_code=200, json=lambda: FH)
+    jobs = careerops.freehire_search("DevOps Engineer", http=get)
+    assert seen["url"].endswith("/api/v1/agent/jobs/search")
+    assert seen["params"]["q"] == "DevOps Engineer" and seen["params"]["source_type"] == "ats"
+    assert seen["params"]["countries"] == "in"
+    assert len(jobs) == 5
+    assert careerops.freehire_search("x", http=lambda u, **k: SimpleNamespace(status_code=503, json=lambda: {})) == []
+
+
+def test_location_filter_uses_profile_cities_and_aliases(fh_prof):
+    assert careerops.location_ok(fh_prof, FH["data"][0])          # Pune
+    assert not careerops.location_ok(fh_prof, FH["data"][1])      # Chennai
+    assert careerops.location_ok(fh_prof, FH["data"][4])          # remote / Bangalore
+    assert careerops.location_ok({"search": {"locations": []}}, FH["data"][1])  # no cities set: keep all
+
+
+def test_freehire_run_saves_open_matching_company_jobs(monkeypatch, fh_prof):
+    monkeypatch.setattr(careerops, "freehire_search", lambda q, **k: FH["data"])
+    out = careerops.freehire_run(fh_prof, http=_ok(200), log=lambda m: None)
+    assert out["saved"] == 2 and out["closed"] == 1
+    with core.db() as c:
+        rows = [dict(r) for r in c.execute("SELECT title, company, source, url, apply_url, posted FROM jobs ORDER BY company")]
+    assert [r["company"] for r in rows] == ["Comscore, Inc.", "Teikametrics"]
+    assert {r["source"] for r in rows} == {"freehire"}
+    assert "utm_source" not in rows[0]["url"] and rows[0]["apply_url"] == rows[0]["url"]
+    assert rows[0]["posted"] == "2026-10-28"
+    assert careerops.freehire_run(fh_prof, http=_ok(200), log=lambda m: None)["saved"] == 0  # no duplicates
+
+
+def test_run_includes_freehire_unless_turned_off(monkeypatch, prof):
+    monkeypatch.setattr(careerops, "runtime", lambda: ["node"])
+    monkeypatch.setattr(careerops, "freehire_run", lambda p, **k: {"saved": 3})
+    out = careerops.run({"companies": [], "profile": prof}, log=lambda m: None)
+    assert out["freehire"] == {"saved": 3}
+    assert "freehire" not in careerops.run({"companies": [], "profile": prof, "freehire": False}, log=lambda m: None)
+
+
+def test_freehire_url_drops_tracking_anywhere_and_respects_stop(monkeypatch, fh_prof):
+    assert careerops.untrack("https://a.io/j/1?utm_source=freehire.me") == "https://a.io/j/1"
+    assert careerops.untrack("https://a.io/j/1?utm_source=freehire.me&gh_jid=9") == "https://a.io/j/1?gh_jid=9"
+    assert careerops.untrack("https://a.io/j/1?gh_jid=9&utm_source=freehire.me&x=1") == "https://a.io/j/1?gh_jid=9&x=1"
+    monkeypatch.setattr(careerops, "freehire_search", lambda q, **k: FH["data"])
+    monkeypatch.setattr(careerops.autopilot, "stopped", lambda: True)
+    assert careerops.freehire_run(fh_prof, http=_ok(200), log=lambda m: None)["saved"] == 0

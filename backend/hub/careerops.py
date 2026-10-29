@@ -6,6 +6,10 @@ node or bun), keep roles whose title passes the profile filter AND matches a sea
 (career_resolve.TITLE_MIN), drop dead links, and save them as jobs(source='careerops', apply_type='external') with
 apply_url set, so scoring, career_apply and the email phase handle them like any other job. No API key, no LLM tokens.
 career-ops never submits anything; applying stays with career_apply / email.
+
+freehire (github.com/strelov1/freehire, MIT) adds the companies we do not know yet: its free public search API indexes
+millions of postings crawled from company career sites and ATS boards. freehire_run() asks it for each search keyword,
+limited to ATS / company sources in India, and saves matches the same way (source='freehire').
 """
 import json
 import re
@@ -31,6 +35,9 @@ SUPPORTED = ("greenhouse", "lever", "ashby", "smartrecruiters", "workable", "rec
 BOARD_URL = {"greenhouse": "https://job-boards.greenhouse.io/{}", "lever": "https://jobs.lever.co/{}",
              "ashby": "https://jobs.ashbyhq.com/{}", "smartrecruiters": "https://careers.smartrecruiters.com/{}",
              "workable": "https://apply.workable.com/{}"}
+FREEHIRE_API = "https://freehire.me/api/v1/agent/jobs/search"
+CITY_ALIASES = {"bangalore": "bengaluru", "bengaluru": "bangalore", "gurgaon": "gurugram", "gurugram": "gurgaon",
+                "bombay": "mumbai", "mumbai": "bombay"}
 RESCAN_DAYS = 3
 NO_BOARD_DAYS = 14
 
@@ -165,6 +172,69 @@ def save_results(profile: dict, results: list, boards: dict, per_company: int = 
     return out
 
 
+def untrack(url: str) -> str:
+    """Drop freehire's utm_source=freehire.me wherever it sits in the query string."""
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+    u = urlsplit(url or "")
+    q = [(k, v) for k, v in parse_qsl(u.query, keep_blank_values=True) if not (k == "utm_source" and v == "freehire.me")]
+    return urlunsplit(u._replace(query=urlencode(q)))
+
+
+def freehire_search(query: str, country: str = "in", limit: int = 50, http=None) -> list:
+    """Open postings on company career sites / ATS boards (freehire source_type=ats) matching `query`."""
+    try:
+        r = (http or requests.get)(FREEHIRE_API, params={"q": query, "countries": country, "source_type": "ats",
+                                                         "limit": limit}, headers=career_resolve.UA, timeout=30)
+        return (r.json().get("data") or []) if r.status_code == 200 else []
+    except (requests.RequestException, ValueError):
+        return []
+
+
+def location_ok(profile: dict, job: dict) -> bool:
+    """Job is in one of the profile cities (or remote when 'Remote' is listed). No cities in the profile: keep all."""
+    want = {str(l).strip().lower() for l in (profile.get("search") or {}).get("locations") or [] if l}
+    want -= {"all", "all cities", ""}
+    if not want:
+        return True
+    want |= {CITY_ALIASES[w] for w in want if w in CITY_ALIASES}
+    text = " ".join([job.get("location") or ""] + list(job.get("cities") or [])).lower()
+    if "remote" in want and (job.get("work_mode") == "remote" or "remote" in text):
+        return True
+    return any(w in text for w in want if w != "remote")
+
+
+def freehire_run(profile: dict, per_query: int = 25, http=None, log=print) -> dict:
+    out, seen = {"queries": 0, "found": 0, "closed": 0, "saved": 0, "dead": 0}, set()
+    for kw in [k for k in (profile.get("search") or {}).get("keywords") or [] if k]:
+        if autopilot.stopped():
+            break
+        out["queries"] += 1
+        saved = 0
+        for j in freehire_search(kw, limit=per_query):
+            if autopilot.stopped():
+                break
+            url = untrack(str(j.get("url") or ""))
+            if url in seen or not url.startswith("http") or not title_matches(profile, j.get("title", "")) \
+                    or not location_ok(profile, j):
+                continue
+            seen.add(url)
+            out["found"] += 1
+            if j.get("closed_at"):
+                out["closed"] += 1
+                continue
+            if is_live(url, http) is False:
+                out["dead"] += 1
+                continue
+            if autopilot.save_job({"source": "freehire", "ext_id": str(j.get("external_id") or ""), "url": url,
+                                   "title": j["title"].strip(), "company": j.get("company") or "",
+                                   "location": j.get("location") or "", "posted": str(j.get("posted_at") or "")[:10],
+                                   "description": j.get("description") or "", "apply_type": "external", "apply_url": url}):
+                saved += 1
+        out["saved"] += saved
+        log(f"[freehire] '{kw}': {saved} new company-site jobs saved")
+    return out
+
+
 def default_companies(limit: int) -> list:
     """Companies we already know (from jobs and HR contacts), rotated so each run scans a few new ones."""
     with core.db() as c:
@@ -213,6 +283,8 @@ def run(opts: dict, log=print) -> dict:
     for e in entries:
         core.kv_set("careerops:scanned:" + e["careers_url"], datetime.now().isoformat())
     out.update(save_results(p, results, boards, int(opts.get("per_company", 10)), log=log))
+    if opts.get("freehire", True) and not autopilot.stopped():
+        out["freehire"] = freehire_run(p, log=log)
     return out
 
 

@@ -614,6 +614,13 @@ def run(opts: dict) -> dict:
         import career_scan  # lazy: career_scan imports this module
         if career_scan.api_key():
             summary["career"] = career_scan.run({"limit": opts.get("career_companies", 5)})
+    if opts.get("careerops", c.get("careerops", True)) and os.environ.get("JOBHUB_CAREEROPS", "1") != "0" and not stopped():
+        import careerops  # lazy: careerops imports this module
+        try:
+            summary["careerops"] = careerops.run({"limit": int(opts.get("careerops_companies", c.get("careerops_companies", 8))),
+                                                  "profile": p}, log=log)
+        except Exception as e:  # noqa: BLE001 - a scanner failure must not stop scoring / applying
+            summary["careerops"] = {"error": f"{type(e).__name__}: {str(e)[:150]}"}
     summary["scoring"] = score_new(p, c)
     summary["synced_contacts"] = sync_existing_job_contacts()
     if opts.get("apply", True) and not stopped():

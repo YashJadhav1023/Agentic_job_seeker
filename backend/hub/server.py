@@ -563,7 +563,7 @@ def apply_to_jobs(a):
             return {"error": "live applications blocked: " + why, "hint": "run with dry_run=true to preview drafts"}
         if autopilot.stopped():
             return {"error": f"kill-switch active ({autopilot.STOP_FILE}); autopilot_stop(on=false) to clear"}
-    opts = {"job_ids": ids, "dry_run": dry, "discover": False, "posts": False, "career": False, "apply": False,
+    opts = {"job_ids": ids, "dry_run": dry, "discover": False, "posts": False, "career": False, "careerops": False, "apply": False,
             "form": True, "email": True}
     env = {"PYTHONUNBUFFERED": "1", "DISPLAY": os.environ.get("DISPLAY", ":0"),
            "PLAYWRIGHT_BROWSERS_PATH": str(core.ROOT / ".browsers")}

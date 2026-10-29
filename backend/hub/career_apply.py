@@ -183,13 +183,38 @@ def digits(s) -> str:
     return re.sub(r"\D", "", str(s or ""))
 
 
+def _as_dict(v) -> dict:
+    return v if isinstance(v, dict) else {}
+
+
+def education_from_text(text) -> dict:
+    """The resume import stores education as one line, e.g. "B.Tech Computer Science, VVP Institute, Solapur
+    (2022-2025), CGPA 6.84". Split it into the fields the form filler uses."""
+    s = " ".join(str(x) for x in text) if isinstance(text, list) else str(text or "")
+    if not s.strip():
+        return {}
+    parts = [p.strip() for p in re.split(r",|\|", s) if p.strip()]
+    years = re.findall(r"\b(?:19|20)\d{2}\b", s)
+    gpa = re.search(r"(?:c?gpa|cpi|percentage)[:\s]*([\d.]+%?)", s, re.I)
+    low = s.lower()
+    level = ("Doctorate" if re.search(r"\bph\.?d", low) else
+             "Master's" if re.search(r"\b(m\.?tech|m\.?e\b|m\.?sc|mca|mba|master)", low) else
+             "Bachelor's" if re.search(r"\b(b\.?tech|b\.?e\b|b\.?sc|bca|bachelor|b\.?com)", low) else
+             "Diploma" if "diploma" in low else "")
+    uni = next((p for p in parts[1:] if re.search(r"institut|universit|college|iit|nit|school", p, re.I)),
+               parts[1] if len(parts) > 1 else "")
+    return {"highest_level": level, "degree": parts[0] if parts else "", "university": re.sub(r"\(.*?\)", "", uni).strip(),
+            "graduation_year": years[-1] if years else "", "gpa": gpa.group(1) if gpa else ""}
+
+
 def facts(profile: dict, resume_text: str = "") -> dict:
     """Everything a form may ask for, taken from profile.yaml. Missing facts are simply absent (-> field unresolved)."""
-    a = profile.get("applicant") or {}
-    comp = profile.get("compensation") or {}
-    exp = profile.get("experience") or {}
-    loc = a.get("location") or {}
-    edu = a.get("education") or {}
+    a = _as_dict(profile.get("applicant"))
+    comp = _as_dict(profile.get("compensation"))
+    exp = _as_dict(profile.get("experience"))
+    loc = _as_dict(a.get("location"))
+    edu = a.get("education")
+    edu = edu if isinstance(edu, dict) else education_from_text(edu)
     name = (a.get("name") or "").strip()
     parts = name.split()
     f = {

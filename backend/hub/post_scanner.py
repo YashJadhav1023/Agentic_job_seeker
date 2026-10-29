@@ -14,6 +14,8 @@ import asyncio, hashlib, json, os, re, sys, urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import requests  # noqa: E402
+
 import contacts  # noqa: E402
 import core  # noqa: E402
 import notify  # noqa: E402
@@ -32,6 +34,36 @@ ASKS_EMAIL = re.compile(
 )
 EMAIL = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}")
 SKIP_LINK = re.compile(r"linkedin\.com/(in|company|feed/hashtag|search|school|showcase|groups)|lnkd\.in/?$|^mailto:", re.I)
+# hosts that are never a job application page (chat invites, social media, link shorteners we could not open)
+NOT_JOB_HOST = re.compile(r"(^|\.)(whatsapp\.com|wa\.me|t\.me|telegram\.(me|org)|instagram\.com|facebook\.com|youtube\.com|"
+                          r"youtu\.be|twitter\.com|x\.com|lnkd\.in|linkedin\.com|bit\.ly|tinyurl\.com)$", re.I)
+NOT_A_DOMAIN = re.compile(r"^(b|m)\.?(tech|e|sc|com|ca|ba)$|^(mca|bca|mba)$", re.I)  # "B.Tech" in a post became a link
+
+
+def clean_link(url: str, http=None) -> str:
+    """Real target of a link in a post: unwrap linkedin.com/safety/go/?url=..., open lnkd.in short links, and return ""
+    for links that cannot be an application page (WhatsApp channel, LinkedIn group, "http://B.Tech", ...)."""
+    from urllib.parse import parse_qs, urlparse
+    for _ in range(3):
+        u = urlparse(url or "")
+        host = (u.hostname or "").lower()
+        if host.endswith("linkedin.com") and u.path.startswith("/safety/go"):
+            url = (parse_qs(u.query).get("url") or [""])[0]
+            continue
+        if host == "lnkd.in" and len(u.path) > 2:
+            try:
+                r = (http or requests.get)(url, headers={"User-Agent": "Mozilla/5.0 Chrome/130"}, timeout=10, allow_redirects=True)
+                m = re.search(r'<a[^>]+class="[^"]*artdeco-button[^"]*"[^>]+href="([^"]+)"', r.text or "")
+                url = m.group(1) if m else (r.url if "lnkd.in" not in str(r.url) else "")
+            except Exception:  # noqa: BLE001 - shortener unreachable: drop the link
+                return ""
+            continue
+        break
+    u = urlparse(url or "")
+    host = (u.hostname or "").lower()
+    if not url.startswith("http") or "." not in host or NOT_A_DOMAIN.match(host) or NOT_JOB_HOST.search(host):
+        return ""
+    return url
 PERSONAL = ("gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "rediffmail.com", "icloud.com", "proton.me")
 DEFAULTS = {"max_queries": 12, "scrolls": 30, "max_posts_per_query": 80, "include_feed": False, "feed_scrolls": 12,
             "date_posted": "past-week",
@@ -270,9 +302,9 @@ def auto_apply(p: dict, leads: list, dry: bool, log=print) -> dict:
     out = {"dry_run": dry}
     ids = []
     for lead in leads:
-        link = next((l for l in lead.get("links", []) if l.startswith("http")), "")
+        link = next((u for u in (clean_link(l) for l in lead.get("links", []) if l.startswith("http")) if u), "")
         if not link:
-            continue
+            continue  # no application page in the post: the HR email below (if any) is the channel
         autopilot.save_job({"source": "post", "ext_id": "", "url": link, "title": lead.get("role") or "Hiring post",
                             "company": lead.get("company", ""), "location": lead.get("location", ""),
                             "posted": lead.get("found_at", ""), "description": lead.get("excerpt", ""), "apply_type": "external"})

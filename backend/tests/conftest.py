@@ -6,6 +6,7 @@ import os
 import pytest
 
 os.environ.setdefault("JOBHUB_SCHEDULER", "0")  # no background scheduler thread in tests
+os.environ.setdefault("JOBHUB_CAREEROPS", "0")  # autopilot runs in tests must not scan real job boards
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hub"))
 import core  # noqa: E402

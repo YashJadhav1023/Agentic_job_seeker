@@ -1,7 +1,5 @@
 """2026-10-30 improvements: form Q&A memory, freshness + high-match alerts, email patterns / catch-all, JD keyword gap."""
-import json
 
-import pytest
 
 import autopilot
 import career_apply as ca

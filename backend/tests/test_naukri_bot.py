@@ -1,11 +1,8 @@
 """Naukri bot helpers (vendored job-automation + our hubguard patch)."""
 import asyncio
 import importlib.util
-import os
-import sys
 from pathlib import Path
 
-import pytest
 
 GUARD = Path(__file__).resolve().parent.parent / "vendor-patches" / "job-automation-hubguard.py"
 

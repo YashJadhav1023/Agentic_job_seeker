@@ -462,7 +462,36 @@ def yesno(text_options: list, yes: bool):
 
 
 def decide(d: dict, F: dict, job: dict, ask=None) -> tuple:
-    """-> (action, value, note). action: fill | select | choose | check | upload | skip | unresolved."""
+    """-> (action, value, note). action: fill | select | choose | check | upload | skip | unresolved.
+
+    A question the profile cannot answer gets the answer you saved for it earlier (form_qa), if there is one."""
+    out = _decide(d, F, job, ask)
+    if out[0] != "unresolved" or not F.get("qa") or d["kind"] in ("file", "checkbox"):
+        return out
+    import form_qa
+    ans = F["qa"].get(form_qa.key(d.get("label", "")))
+    if not ans:
+        return out
+    opts = d.get("options") or []
+    if opts:
+        i = pick_option(opts, [ans])
+        return ("select" if d["kind"] == "select" else "choose", i, "saved answer") if i is not None else out
+    return ("fill", ans[: d["maxlength"]] if d.get("maxlength") else ans, "saved answer")
+
+
+def tailored_cover(F: dict, job: dict) -> str:
+    """Cover note for this job: the profile note plus the candidate's own skills that this JD asks for (never others)."""
+    jd = norm(f"{job.get('title', '')} {job.get('description', '')}")
+    mine = [s.strip() for s in (F.get("skills") or "").split(",") if s.strip()]
+    hits = [s for s in mine if re.search(r"(?<![a-z0-9])" + re.escape(s.lower()) + r"(?![a-z0-9])", jd)][:5]
+    note = F.get("cover_note") or ""
+    if hits and job.get("company"):
+        note += (f" For the {job.get('title') or 'role'} at {job['company']}, my hands-on work with "
+                 f"{', '.join(hits[:-1]) + ' and ' + hits[-1] if len(hits) > 1 else hits[0]} matches what you are looking for.")
+    return note.strip()
+
+
+def _decide(d: dict, F: dict, job: dict, ask=None) -> tuple:
     kind, req = d["kind"], d.get("required")
     it = intent(d)
     label = d.get("label", "")
@@ -894,7 +923,17 @@ def apply_one(ctx, job: dict, F: dict, dry: bool, ask=None, shot_dir: Path = SHO
                 elif act != "skip":
                     plan.append((d, act, val))
             if bad:
-                res.update(status="unresolved", reason="required fields not answerable: " + "; ".join(bad[:5]))
+                try:
+                    import form_qa
+                    for d in descs:
+                        if decide(d, F, job, ask)[0] == "unresolved" and d["kind"] not in ("file", "checkbox"):
+                            form_qa.record_unanswered(d.get("label") or d.get("name") or "",
+                                                      [o.get("text", "") for o in d.get("options") or [] if not o.get("placeholder")],
+                                                      job.get("company", ""))
+                except Exception:  # noqa: BLE001 - bookkeeping must not change the result
+                    pass
+                res.update(status="unresolved", reason="required fields not answerable: " + "; ".join(bad[:5]) +
+                           " (saved: answer it once in the app under form_questions and it is reused)")
                 return res
             for d, act, val in plan:
                 if _apply_action(scope, d, act, val):
@@ -992,6 +1031,11 @@ def run_batch(profile: dict, jobs: list, dry: bool, emit=print, pause=(6, 14)) -
     if rp and Path(rp).exists():
         rt = composer.resume_text(rp)
     F = facts(profile, rt)
+    try:
+        import form_qa
+        F["qa"] = form_qa.answers()
+    except Exception:  # noqa: BLE001
+        F["qa"] = {}
     results = []
     headed = make_human(profile, {}) is not None and not dry
     with sync_playwright() as p:
@@ -1015,7 +1059,8 @@ def run_batch(profile: dict, jobs: list, dry: bool, emit=print, pause=(6, 14)) -
                 ctx.set_default_timeout(15000)
                 ctx.set_default_navigation_timeout(45000)
                 try:
-                    r = apply_one(ctx, j, F, dry, make_asker(F, j), human=make_human(profile, j) if headed else None)
+                    Fj = {**F, "cover_note": tailored_cover(F, j)}
+                    r = apply_one(ctx, j, Fj, dry, make_asker(Fj, j), human=make_human(profile, j) if headed else None)
                 finally:
                     if shared is None:
                         ctx.close()

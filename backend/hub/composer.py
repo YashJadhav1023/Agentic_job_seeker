@@ -234,7 +234,10 @@ def compose(profile: dict, job: dict, source: str = "", recruiter: str = "", col
         tag = f" ({', '.join(top)})" if top else ""
         ref = f" [{jd['ref']}]" if jd["ref"] else ""
         subject = f"Application for {role}{ref} - {a['name']}{tag}"[:150]
-    return {"subject": subject, "body": body, "matched": matched, "bullets": bullets, "jd": jd}
+    missing = [s for s in jd["skills"] if s not in rp["skills"]]
+    return {"subject": subject, "body": body, "matched": matched, "bullets": bullets, "jd": jd,
+            "pitch": bullets[:3],      # 3 resume bullets that best match this JD (quoted from the resume)
+            "missing": missing}        # JD keywords NOT in the resume: shown to you, never claimed in the email
 
 
 # ---------------------------------------------------------------- optional local-LLM polish (Ollama), fact-guarded

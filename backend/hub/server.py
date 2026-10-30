@@ -229,7 +229,8 @@ TOOLS = {
                          locations={"type": "array", "items": {"type": "string"}, "maxItems": 25,
                                     "description": "any cities (and/or Remote); every one is searched. Default: profile locations"},
                          sites={"type": "array", "items": {"type": "string", "enum": ["linkedin", "indeed", "naukri", "glassdoor", "google"]}},
-                         hours_old={"type": "integer", "minimum": 1, "maximum": 720, "default": 168},
+                         hours_old={"type": "integer", "minimum": 1, "maximum": 720, "default": 24,
+                                    "description": "only jobs posted in the last N hours (24 = fresh, highest reply rate)"},
                          per_search={"type": "integer", "minimum": 5, "maximum": 50, "default": 20},
                          auto_apply={"type": "boolean", "default": False},
                          apply_limit={"type": "integer", "minimum": 1, "maximum": 30, "default": 10},
@@ -279,6 +280,11 @@ TOOLS = {
     "queue_status": ("Run queue: what is running now, what is waiting (FIFO) and the limit (3 runs at once).", _s("")),
     "attention_list": ("Open 'the bot needs you' requests: a site wants a login or a human check during a run. Each has a link "
                        "(open_url) to the remote browser where the bot waits; it continues by itself once the step is done.", _s("")),
+    "form_questions": ("Application-form questions the bot could not answer from your profile (it skipped those forms). "
+                       "Answer each once with form_answer and every later form that asks it is filled with your answer. all=true "
+                       "also lists answered ones.", _s("", all={"type": "boolean"})),
+    "form_answer": ("Save your answer to a form question (id from form_questions). Reused on every later form.",
+                    _s("", id={"type": "integer"}, answer={"type": "string", "maxLength": 1000})),
     "attention_resolve": ("Close a 'needs you' request: skipped = the bot gives up on that job now; done = you finished it.",
                           _s("", id={"type": "integer"}, status={"type": "string", "enum": ["done", "skipped"]})),
 }
@@ -299,9 +305,9 @@ ANNOT = {"hub_status": READ, "list_hr_contacts": READ, "run_status": READ, "trac
          "whatsapp_status": READ_NET, "whatsapp_link": dict(WRITE, openWorldHint=True), "whatsapp_unlink": dict(WRITE, destructiveHint=True),
          "whatsapp_settings": dict(WRITE, idempotentHint=True), "whatsapp_import_numbers": WRITE, "whatsapp_contacts": READ, "whatsapp_send": ACT,
          "alarm_list": READ, "alarm_set": dict(WRITE, idempotentHint=True), "alarm_delete": dict(WRITE, destructiveHint=True),
-         "alarm_run_now": ACT, "attention_list": READ, "attention_resolve": dict(WRITE, idempotentHint=True)}
+         "alarm_run_now": ACT, "attention_list": READ, "form_questions": READ, "form_answer": dict(WRITE, idempotentHint=True), "attention_resolve": dict(WRITE, idempotentHint=True)}
 
-REQUIRED = {"apply_jobs": ["platform"], "attention_resolve": ["id"], "run_status": ["run_id"], "send_email": ["to", "subject", "body"],
+REQUIRED = {"apply_jobs": ["platform"], "attention_resolve": ["id"], "form_answer": ["id", "answer"], "run_status": ["run_id"], "send_email": ["to", "subject", "body"],
             "find_hr_emails": ["city"], "login_platform": ["platform"], "add_hr_contact": ["email", "source_url"], "job_detail": ["id"], "tailor_application": ["job_url_or_id"],
             "verify_email": ["email"], "guard_job_posting": ["jd_text"], "cancel_run": ["run_id"], "autopilot_stop": ["on"], "suppress_contact": ["email_or_domain"],
             "mailscout_find_emails": ["domain"], "unlink_platform": ["platform"],
@@ -651,6 +657,19 @@ def attention_list(_):
         r["open_url"] = attention.open_link(r["id"])
         r["minutes_left"] = max(0, int((r.pop("expires") - time.time()) // 60))
     return {"requests": items, "available": attention.available()}
+
+
+def form_questions(a):
+    import form_qa
+    return {"questions": form_qa.all_questions() if (a or {}).get("all") else form_qa.pending()}
+
+
+def form_answer(a):
+    import form_qa
+    try:
+        return {"saved": form_qa.save_answer(int(a["id"]), a["answer"])}
+    except ValueError as e:
+        return {"error": str(e)}
 
 
 def attention_resolve(a):

@@ -57,7 +57,7 @@ def collect(p: dict, opts: dict, search, log=print) -> list:
     for kw, loc in pairs(p, opts):
         log(f"[search] {kw!r} in {loc!r} on {', '.join(sites)}")
         res = search({"query": kw, "location": loc, "sites": sites, "limit": int(opts.get("per_search", 20)),
-                      "hours_old": int(opts.get("hours_old", 168)), "save": True,
+                      "hours_old": int(opts.get("hours_old", 24)), "save": True,
                       "fetch_description": bool(opts.get("fetch_description", True))})
         if res.get("error"):
             log(f"[search] {kw!r} {loc!r}: {res['error']}")

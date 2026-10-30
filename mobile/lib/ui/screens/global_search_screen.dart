@@ -33,8 +33,9 @@ class GlobalSearchScreen extends ConsumerStatefulWidget {
 class _GlobalSearchScreenState extends ConsumerState<GlobalSearchScreen> {
   final _query = TextEditingController();
   final _location = TextEditingController();
+  final _cities = <String>[]; // every city here is searched; starts with the profile's cities
   final _sites = <String>{'linkedin', 'indeed', 'naukri', 'google'};
-  bool _autoApply = false;
+  bool _autoApply = true; // found jobs are applied to (company form, Naukri/LinkedIn, or a tailored email)
   bool _preview = true; // dry run: drafts and form fills only, nothing is sent
   _Phase _phase = _Phase.form;
   String? _runId;
@@ -45,6 +46,33 @@ class _GlobalSearchScreenState extends ConsumerState<GlobalSearchScreen> {
   Timer? _timer;
   bool _applying = false;
   String? _applyRun;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCities();
+  }
+
+  Future<void> _loadCities() async {
+    try {
+      final p = await requireClientFrom(ref).profile();
+      final locs = (((p['profile'] as Map?)?['search'] as Map?)?['locations'] as List?) ?? const [];
+      if (!mounted || _cities.isNotEmpty) return;
+      setState(() => _cities.addAll(locs.map((e) => '$e').where((e) => e.trim().isNotEmpty)));
+    } catch (_) {
+      // offline or not connected yet: the user can still type cities
+    }
+  }
+
+  /// Adds every comma-separated city in the box (any city name works, or "Remote").
+  void _addCities() {
+    for (final c in _location.text.split(',')) {
+      final city = c.trim();
+      if (city.isEmpty) continue;
+      if (!_cities.any((x) => x.toLowerCase() == city.toLowerCase())) _cities.add(city);
+    }
+    setState(_location.clear);
+  }
 
   @override
   void dispose() {
@@ -75,6 +103,7 @@ class _GlobalSearchScreenState extends ConsumerState<GlobalSearchScreen> {
       setState(() => _error = 'Pick at least one job board.');
       return;
     }
+    if (_location.text.trim().isNotEmpty) _addCities();
     if (_autoApply && !_preview && !await _confirmLive('Auto-apply')) return;
     setState(() {
       _error = null;
@@ -86,7 +115,7 @@ class _GlobalSearchScreenState extends ConsumerState<GlobalSearchScreen> {
     try {
       final r = await requireClientFrom(ref).call('global_search', {
         if (_query.text.trim().isNotEmpty) 'query': _query.text.trim(),
-        if (_location.text.trim().isNotEmpty) 'location': _location.text.trim(),
+        if (_cities.isNotEmpty) 'locations': _cities.toList(),
         'sites': _sites.toList(),
         'auto_apply': _autoApply,
         'dry_run': _preview,
@@ -221,12 +250,29 @@ class _GlobalSearchScreenState extends ConsumerState<GlobalSearchScreen> {
         const SizedBox(height: 12),
         TextField(
           controller: _location,
-          decoration: const InputDecoration(
-            labelText: 'City or Remote (optional)',
-            helperText: 'Empty = all cities in your profile',
-            prefixIcon: Icon(Icons.place_outlined),
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => _addCities(),
+          decoration: InputDecoration(
+            labelText: 'Add a city (any city, or Remote)',
+            helperText: 'Every city below is searched. Separate several with commas.',
+            prefixIcon: const Icon(Icons.place_outlined),
+            suffixIcon: IconButton(
+              tooltip: 'Add city',
+              icon: const Icon(Icons.add_location_alt_outlined),
+              onPressed: _addCities,
+            ),
           ),
         ),
+        const SizedBox(height: 8),
+        Wrap(spacing: 8, runSpacing: 4, children: [
+          for (final c in _cities)
+            InputChip(
+              label: Text(c),
+              onDeleted: () => setState(() => _cities.remove(c)),
+            ),
+          if (_cities.isEmpty)
+            const Text('No city picked: searches all of India', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+        ]),
         const SizedBox(height: 14),
         const Text('Boards', style: TextStyle(fontWeight: FontWeight.w700)),
         const SizedBox(height: 6),
@@ -242,7 +288,7 @@ class _GlobalSearchScreenState extends ConsumerState<GlobalSearchScreen> {
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           title: const Text('Apply automatically to good matches'),
-          subtitle: const Text('Company form, or a tailored email with your resume to the verified contact'),
+          subtitle: const Text('Company form (you get a notification if a site needs your login), else a tailored email'),
           value: _autoApply,
           onChanged: (v) => setState(() => _autoApply = v),
         ),

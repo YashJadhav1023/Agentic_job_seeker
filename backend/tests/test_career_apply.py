@@ -322,3 +322,131 @@ def test_required_unknown_question_answered_by_model(browser, site, F, tmp_path)
 def test_multi_step_form(browser, site, F, tmp_path):
     r = run(browser, F, tmp_path, site + "/multi.html")
     assert r["status"] == "applied" and r["steps"] == 2, r
+
+
+# ---------------------------------------------------------------- 2026-10-30: fixes from live failures
+DEGREES = [{"text": "Choose", "value": "", "placeholder": True}, {"text": "BE", "value": "be"}, {"text": "B.Tech", "value": "bt"},
+           {"text": "M.Tech", "value": "mt"}]
+BRANCHES = [{"text": "Choose", "value": "", "placeholder": True}, {"text": "Computer Engineering", "value": "ce"},
+            {"text": "Information Technology", "value": "it"}, {"text": "Computer Science & Engineering", "value": "cse"},
+            {"text": "Mechanical", "value": "me"}]
+
+
+def test_degree_option_matched_from_a_long_degree(F):
+    F["degree"] = "B.Tech Computer Science"
+    act, val, _ = ca.decide(field("Degree", "select", options=DEGREES), F, {})
+    assert (act, DEGREES[val]["text"]) == ("select", "B.Tech")
+    F["degree"] = "Bachelor of Engineering (Computer)"
+    act, val, _ = ca.decide(field("Degree", "select", options=DEGREES), F, {})
+    assert DEGREES[val]["text"] == "BE"
+
+
+def test_branch_from_the_degree_text(F):
+    F["degree"] = "B.Tech Computer Science"
+    act, val, _ = ca.decide(field("Branch", "select", options=BRANCHES), F, {})
+    assert (act, BRANCHES[val]["text"]) == ("select", "Computer Science & Engineering")
+    act, val, _ = ca.decide(field("Specialization / Stream *", "text"), F, {})
+    assert (act, val) == ("fill", "Computer Science")
+
+
+def test_gender_from_profile_else_declined(F):
+    opts = [{"text": "Select", "value": "", "placeholder": True}, {"text": "Male", "value": "m"}, {"text": "Female", "value": "f"},
+            {"text": "Prefer not to say", "value": "x"}]
+    F["gender"] = "Male"
+    act, val, _ = ca.decide(field("Gender *", "select", options=opts), F, {})
+    assert (act, opts[val]["text"]) == ("select", "Male")
+    F["gender"] = ""
+    act, val, _ = ca.decide(field("Gender *", "select", options=opts), F, {})
+    assert opts[val]["text"] == "Prefer not to say"
+    F["gender"] = "Female"
+    assert ca.decide(field("Gender *", "text"), F, {})[:2] == ("fill", "Female")
+    act, val, _ = ca.decide(field("Race / ethnicity *", "select", options=opts), F, {})   # only gender comes from the profile
+    assert opts[val]["text"] == "Prefer not to say"
+
+
+def test_facts_carry_gender():
+    p = {**PROFILE, "applicant": {**PROFILE["applicant"], "gender": "Male"}}
+    assert ca.facts(p)["gender"] == "Male"
+
+
+def test_form_hosts_and_success_text():
+    assert ca.is_form_host("https://forms.gle/PuMo3EkPyaj19ntGA")
+    assert ca.is_form_host("https://docs.google.com/forms/d/e/1FAI/viewform")
+    assert ca.is_form_host("https://acme.typeform.com/to/x") and not ca.is_form_host("https://acme.com/careers")
+    assert ca.SUCCESS_RX.search("Your response has been recorded.")
+
+
+def test_caps_defaults_raised():
+    import autopilot
+    c = autopilot.cfg({})
+    assert c["career_apply_max_per_run"] == 10 and c["career_apply_max_per_day"] == 40
+
+
+SPA = """<title>Workday</title><body><div id=root>Loading...</div><script>
+setTimeout(() => { root.innerHTML = "<h1>DevOps Engineer</h1><a href='/ok.html'>Apply</a>"; }, 2500);</script></body>"""
+LOGIN_THEN_FORM = """<title>DevOps Engineer</title><h1>DevOps Engineer</h1><div id=w><p>Sign in to apply</p><input type=password id=pw>
+<button onclick="location.href='/ok.html'">Sign in</button></div>"""
+
+
+@pytest.fixture
+def site2(tmp_path):
+    served = tmp_path / "www2"
+    served.mkdir()
+    for path, html in {**pages(), "/spa.html": SPA, "/login2.html": LOGIN_THEN_FORM}.items():
+        (served / path.lstrip("/")).write_text(html)
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(served))
+    handler.log_message = lambda *a, **k: None
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{srv.server_address[1]}"
+    srv.shutdown()
+
+
+def test_waits_for_a_slow_single_page_app_before_the_title_check(browser, site2, F, tmp_path):
+    r = run(browser, F, tmp_path, site2 + "/spa.html")
+    assert r["status"] == "applied", r
+
+
+def test_login_wall_is_handed_to_the_user_then_continues(browser, site2, F, tmp_path):
+    asked = []
+
+    def human(page, kind, reason):
+        asked.append(kind)
+        page.click("button")                 # what the user does in the remote browser
+        page.wait_for_load_state("domcontentloaded")
+        return True
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    ctx.set_default_timeout(8000)
+    try:
+        r = ca.apply_one(ctx, {"id": 8, "url": site2 + "/login2.html", "title": "DevOps Engineer", "company": "Acme"}, F, False,
+                         None, shot_dir=tmp_path / "s", step_pause_ms=100, human=human)
+    finally:
+        ctx.close()
+    assert asked == ["login"] and r["status"] == "applied", r
+
+
+def test_login_wall_without_help_still_stops(browser, site2, F, tmp_path):
+    ctx = browser.new_context()
+    try:
+        r = ca.apply_one(ctx, {"id": 9, "url": site2 + "/login2.html", "title": "DevOps Engineer"}, F, False, None,
+                         shot_dir=tmp_path / "s", step_pause_ms=100, human=lambda page, kind, reason: False)
+    finally:
+        ctx.close()
+    assert r["status"] == "login"
+
+
+def test_make_human_only_when_help_is_available(monkeypatch):
+    import attention
+    monkeypatch.setattr(attention, "available", lambda profile=None: False)
+    assert ca.make_human({}, {}) is None
+    monkeypatch.setattr(attention, "available", lambda profile=None: True)
+    calls = []
+    monkeypatch.setattr(attention, "ask_and_wait", lambda kind, site, url, reason, cleared, **k: calls.append((kind, site)) or True)
+
+    class Pg:
+        url = "https://kyndryl.wd5.myworkdayjobs.com/x/job/1"
+
+        def wait_for_timeout(self, ms):
+            pass
+    h = ca.make_human({}, {"title": "SRE", "company": "Kyndryl"})
+    assert h(Pg(), "login", "needs an account") and calls == [("login", "Workday")]

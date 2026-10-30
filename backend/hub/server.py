@@ -225,7 +225,9 @@ TOOLS = {
                       "search_results(run_id). auto_apply=true then applies to the good ones (company form, else a tailored email to the "
                       "verified contact) within your caps. Background run.",
                       _s("", query={"type": "string", "description": "one job title; default: all profile keywords"},
-                         location={"type": "string", "description": "one city or Remote; default: all profile locations"},
+                         location={"type": "string", "description": "one city or Remote (or several, comma separated)"},
+                         locations={"type": "array", "items": {"type": "string"}, "maxItems": 25,
+                                    "description": "any cities (and/or Remote); every one is searched. Default: profile locations"},
                          sites={"type": "array", "items": {"type": "string", "enum": ["linkedin", "indeed", "naukri", "glassdoor", "google"]}},
                          hours_old={"type": "integer", "minimum": 1, "maximum": 720, "default": 168},
                          per_search={"type": "integer", "minimum": 5, "maximum": 50, "default": 20},
@@ -275,6 +277,10 @@ TOOLS = {
                       "the profile's live-actions switch and recipients_expect_my_message=true. Daily cap, pauses and 30-day no-repeat always apply. Background run.",
                       _s("", limit={"type": "integer", "minimum": 1, "maximum": 50}, dry_run={"type": "boolean"})),
     "queue_status": ("Run queue: what is running now, what is waiting (FIFO) and the limit (3 runs at once).", _s("")),
+    "attention_list": ("Open 'the bot needs you' requests: a site wants a login or a human check during a run. Each has a link "
+                       "(open_url) to the remote browser where the bot waits; it continues by itself once the step is done.", _s("")),
+    "attention_resolve": ("Close a 'needs you' request: skipped = the bot gives up on that job now; done = you finished it.",
+                          _s("", id={"type": "integer"}, status={"type": "string", "enum": ["done", "skipped"]})),
 }
 READ = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 READ_NET = dict(READ, openWorldHint=True)
@@ -293,9 +299,9 @@ ANNOT = {"hub_status": READ, "list_hr_contacts": READ, "run_status": READ, "trac
          "whatsapp_status": READ_NET, "whatsapp_link": dict(WRITE, openWorldHint=True), "whatsapp_unlink": dict(WRITE, destructiveHint=True),
          "whatsapp_settings": dict(WRITE, idempotentHint=True), "whatsapp_import_numbers": WRITE, "whatsapp_contacts": READ, "whatsapp_send": ACT,
          "alarm_list": READ, "alarm_set": dict(WRITE, idempotentHint=True), "alarm_delete": dict(WRITE, destructiveHint=True),
-         "alarm_run_now": ACT}
+         "alarm_run_now": ACT, "attention_list": READ, "attention_resolve": dict(WRITE, idempotentHint=True)}
 
-REQUIRED = {"apply_jobs": ["platform"], "run_status": ["run_id"], "send_email": ["to", "subject", "body"],
+REQUIRED = {"apply_jobs": ["platform"], "attention_resolve": ["id"], "run_status": ["run_id"], "send_email": ["to", "subject", "body"],
             "find_hr_emails": ["city"], "login_platform": ["platform"], "add_hr_contact": ["email", "source_url"], "job_detail": ["id"], "tailor_application": ["job_url_or_id"],
             "verify_email": ["email"], "guard_job_posting": ["jd_text"], "cancel_run": ["run_id"], "autopilot_stop": ["on"], "suppress_contact": ["email_or_domain"],
             "mailscout_find_emails": ["domain"], "unlink_platform": ["platform"],
@@ -449,7 +455,10 @@ def apply_jobs(a):
     limit = max(1, min(a.get("limit", p["limits"]["max_applies_per_run_per_platform"]),
                        p["limits"]["max_applies_per_run_per_platform"], remaining if not dry else 30))
     headless = bool(a.get("headless", (p.get("browser") or {}).get("headless", True)))
-    env = {"PYTHONUNBUFFERED": "1", "JOBHUB_DRY_RUN": "1" if dry else "0", "JOBHUB_TITLE_INCLUDE": p["search"]["title_include"],
+    import attention
+    if platform == "naukri" and "headless" not in a and attention.available(p):
+        headless = False  # Naukri blocks headless Chrome; visible on the server display so a human check can be handed to you
+    env = {"JOBHUB_HUB_DIR": str(core.ROOT / "hub"), "PYTHONUNBUFFERED": "1", "JOBHUB_DRY_RUN": "1" if dry else "0", "JOBHUB_TITLE_INCLUDE": p["search"]["title_include"],
            "JOBHUB_TITLE_EXCLUDE": p["search"]["title_exclude"], "JOBHUB_HEADLESS": "1" if headless else "0",
            "JOBHUB_PROFILES": str(core.ROOT / ".profiles"), "JOBHUB_LINKEDIN_PROFILE": str(core.ROOT / ".profiles" / "linkedin"),
            "DISPLAY": os.environ.get("DISPLAY", ":0"),
@@ -523,7 +532,10 @@ def search_jobs(a):
 
 
 def global_search(a):
-    opts = {k: a[k] for k in ("query", "location", "sites", "hours_old", "per_search", "auto_apply", "apply_limit", "dry_run") if k in a}
+    opts = {k: a[k] for k in ("query", "location", "locations", "sites", "hours_old", "per_search", "auto_apply", "apply_limit",
+                              "dry_run") if k in a}
+    if "locations" in opts:
+        opts["locations"] = [str(l).strip()[:60] for l in opts["locations"] if str(l).strip()][:25]
     env = {"PYTHONUNBUFFERED": "1"}
     r = core.spawn("search-global", [core.PY, str(core.ROOT / "hub" / "globalsearch.py"), json.dumps(opts)], core.ROOT, env, True, opts)
     r["note"] = ("Searching all boards. Open the results with search_results(run_id) when the run is finished."
@@ -630,6 +642,20 @@ def whatsapp_send(a):
 
 def queue_status(_):
     return core.queue_state()
+
+
+def attention_list(_):
+    import attention
+    items = attention.pending()
+    for r in items:
+        r["open_url"] = attention.open_link(r["id"])
+        r["minutes_left"] = max(0, int((r.pop("expires") - time.time()) // 60))
+    return {"requests": items, "available": attention.available()}
+
+
+def attention_resolve(a):
+    import attention
+    return {"closed": attention.resolve(int(a["id"]), a.get("status") or "skipped")}
 
 
 def alarm_list(_):

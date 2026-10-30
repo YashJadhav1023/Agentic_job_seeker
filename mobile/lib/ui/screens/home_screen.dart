@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../state/providers.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import '../widgets/attention_banner.dart';
 import '../widgets/queue_banner.dart';
 import 'runs_screen.dart' show runIsFailed, runIsRunning;
 import 'tool_run_screen.dart';
@@ -61,6 +62,7 @@ class HomeScreen extends ConsumerWidget {
               _HeroCard(s),
               const SizedBox(height: 14),
               _SetupChecklist(s),
+              const AttentionBanner(),
               const QueueBanner(),
               _TodayCounters(s),
               const SizedBox(height: 14),
@@ -556,7 +558,7 @@ class _QuickActionsSection extends StatelessWidget {
     final actions = <(IconData, String, Color, String, Map<String, dynamic>)>[
       (Icons.travel_explore_rounded, 'Search All Boards & Apply', AppTheme.primaryLight, '_search', {}),
       (Icons.search_rounded, 'LinkedIn Search & Apply', const Color(0xFF38BDF8), 'search_jobs', {'save': true}),
-      (Icons.dynamic_feed_rounded, 'Scan Hiring Posts (bulk)', const Color(0xFFFBBF24), 'scan_hiring_posts', {'max_posts': 80}),
+      (Icons.dynamic_feed_rounded, 'Scan Hiring Posts & Apply', const Color(0xFFFBBF24), 'scan_hiring_posts', {'max_posts': 80, 'auto_apply': true}),
       (Icons.assignment_turned_in_rounded, 'Easy Apply Bot', const Color(0xFF34D399), 'apply_jobs', {}),
       (Icons.contact_mail_rounded, 'Find HR Emails', const Color(0xFFA78BFA), 'find_hr_emails', {}),
       (Icons.forward_to_inbox_rounded, 'Bulk Email HR', const Color(0xFFF472B6), 'send_hr_emails', {}),

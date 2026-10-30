@@ -24,13 +24,30 @@ RESULTS = core.ROOT / "data" / "search_results"
 MAX_PAIRS = 6
 
 
+def _locations(p: dict, opts: dict) -> list:
+    raw = opts.get("locations") or ([opts["location"]] if opts.get("location") else None) or p["search"].get("locations") or []
+    out, seen = [], set()
+    for item in raw:
+        for l in str(item).split(","):
+            l = l.strip()
+            if l and l.lower() != "all" and l.lower() not in seen:
+                seen.add(l.lower())
+                out.append(l)
+    return out
+
+
 def pairs(p: dict, opts: dict) -> list:
+    """(keyword, city) searches for this run. Every chosen city is searched in every run; when there are more pairs
+    than max_pairs the keywords rotate across runs (one keyword per city per run at minimum)."""
     s = p["search"]
     kws = [k for k in (opts.get("queries") or ([opts["query"]] if opts.get("query") else None) or s.get("keywords") or []) if k]
-    locs = [l for l in (opts.get("locations") or ([opts["location"]] if opts.get("location") else None) or s.get("locations") or [])
-            if l and str(l).lower() != "all"]
-    out = [(k, l) for k in kws for l in (locs or ["India"])]
-    return core.rotate("global_search_pairs", out, int(opts.get("max_pairs", MAX_PAIRS))) if len(out) > MAX_PAIRS else out
+    locs = _locations(p, opts) or ["India"]
+    limit = int(opts.get("max_pairs", MAX_PAIRS))
+    if len(kws) * len(locs) <= limit or not kws:
+        return [(k, l) for k in kws for l in locs]
+    per_city = max(1, limit // len(locs))
+    picked = core.rotate("global_search_keywords", kws, per_city)
+    return [(k, l) for k in picked for l in locs]
 
 
 def collect(p: dict, opts: dict, search, log=print) -> list:

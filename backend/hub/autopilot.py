@@ -35,7 +35,7 @@ RESTRICT_RX = re.compile(r"restrict|unusual activity|security verification|captc
                          r"session (?:has )?expired|log ?in required|please log ?in", re.I)
 DEFAULTS = {"min_score": 45, "max_discover": 30, "per_query": 8, "max_emails_per_run": 8, "send_window": None, "send_days": None,
             "apply_limits": {"naukri": 10, "linkedin": 5}, "platform_cooldown_hours": 24, "job_age_days": 7,
-            "max_search_queries": 6, "career_apply": True, "career_apply_max_per_day": 5, "career_apply_max_per_run": 3,
+            "max_search_queries": 6, "career_apply": True, "career_apply_max_per_day": 40, "career_apply_max_per_run": 10,
             "career_apply_company_days": 30, "career_apply_retry_days": 3, "career_apply_max_attempts": 2,
             "scan_posts": False, "use_jobspy": False, "jobspy_sites": [], "schedule_every_hours": 0,
             "company_blocklist": ["jobgether"], "max_years_tolerance": 1, "polish_model": "", "max_lookups": 15,

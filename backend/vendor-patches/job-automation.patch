@@ -109,20 +109,63 @@ index 37d5723..055b463 100644
      print(f"\n✅ Indeed done — {count} applications")
      return count
 diff --git a/platforms/naukri.py b/platforms/naukri.py
-index ffc5f2d..f39861c 100644
+index ffc5f2d..be44857 100644
 --- a/platforms/naukri.py
 +++ b/platforms/naukri.py
-@@ -5,6 +5,7 @@ import yaml
+@@ -5,6 +5,8 @@ import yaml
  from playwright.async_api import async_playwright, TimeoutError as PWTimeout
  from utils.logger import already_applied, log_applied
  from utils.browser import get_browser_options
-+from utils.hubguard import title_ok, DRY_RUN, PROFILE_DIR, wait_for_login, single_page, fill_all, confirmed_applied, external_only
++from utils.hubguard import (title_ok, DRY_RUN, PROFILE_DIR, wait_for_login, single_page, fill_all, confirmed_applied,
++                            external_only, human_check, wait_for_human, unique_cards, NAUKRI_LOGIN_RX)
  
  with open("config.yaml") as f:
      cfg = yaml.safe_load(f)
-@@ -33,6 +34,12 @@ async def login(page, email, password):
+@@ -32,14 +34,73 @@ async def login(page, email, password):
+     print("✅ Naukri logged in")
  
  
++async def body_text(page):
++    try:
++        return await page.inner_text("body")
++    except Exception:
++        return ""
++
++
++async def needs_human(page):
++    """None, or (kind, reason) when Naukri shows its human check or a login page instead of the content."""
++    if NAUKRI_LOGIN_RX.search(page.url or ""):
++        return "login", "Naukri asks you to sign in again"
++    if human_check(await body_text(page)):
++        return "human_check", "Naukri shows its 'are you human' check"
++    return None
++
++
++async def clear_or_wait(page, job=""):
++    """True when the page shows real content (at once, or after you finished the check / login yourself)."""
++    hit = await needs_human(page)
++    if not hit:
++        return True
++    target = page.url
++
++    async def cleared():
++        if await needs_human(page):
++            return False
++        if NAUKRI_LOGIN_RX.search(target):
++            return True
++        return bool(await page.query_selector("button, a"))
++    ok = await wait_for_human(page, "Naukri", hit[0], hit[1], cleared, job)
++    if ok and NAUKRI_LOGIN_RX.search(page.url or "") is None and page.url.split("?")[0] != target.split("?")[0]:
++        try:
++            await page.goto(target, wait_until="domcontentloaded")
++            await page.wait_for_timeout(2500)
++        except Exception:
++            pass
++    if not ok:
++        print(f"  🧍 {hit[1]} - skipped (no help); open the app to get notified next time", flush=True)
++    return ok
++
++
  async def apply_to_job(page, url, title, company, location):
 +    if not title_ok(title):
 +        print(f"  ⏭️  Skip (title filter): {title}")
@@ -133,10 +176,14 @@ index ffc5f2d..f39861c 100644
      if already_applied(url):
          print(f"  ⏭️  Skip (already applied): {title}")
          return False
-@@ -41,6 +48,16 @@ async def apply_to_job(page, url, title, company, location):
-         await page.goto(url, wait_until="domcontentloaded")
-         await page.wait_for_timeout(2000)
  
+     try:
+         await page.goto(url, wait_until="domcontentloaded")
+-        await page.wait_for_timeout(2000)
++        await page.wait_for_timeout(2500)
++        if not await clear_or_wait(page, f"{title} @ {company}"):
++            return False
++
 +        # What can this job page do? Buttons that mention "apply" tell us.
 +        labels = [((await b.inner_text()) or "").strip() for b in await page.query_selector_all("button, a")]
 +        labels = [t for t in labels if "appl" in t.lower() and len(t) < 60]
@@ -146,11 +193,10 @@ index ffc5f2d..f39861c 100644
 +        if external_only(labels):
 +            print(f"  ⏭️  Skip (applies on the company site, not on Naukri): {title}")
 +            return False
-+
+ 
          # Click Apply button
          apply_btn = await page.query_selector("button#apply-button, a#apply-button, button.apply-button")
-         if not apply_btn:
-@@ -50,43 +67,43 @@ async def apply_to_job(page, url, title, company, location):
+@@ -50,43 +111,43 @@ async def apply_to_job(page, url, title, company, location):
              print(f"  ❌ No apply button: {title}")
              return False
  
@@ -225,7 +271,7 @@ index ffc5f2d..f39861c 100644
          await delay()
          return True
  
-@@ -101,11 +118,10 @@ async def apply_to_job(page, url, title, company, location):
+@@ -101,11 +162,10 @@ async def apply_to_job(page, url, title, company, location):
  async def run(email, password):
      count = 0
      async with async_playwright() as p:
@@ -240,7 +286,7 @@ index ffc5f2d..f39861c 100644
  
          for keyword in cfg["keywords"]:
              if count >= LIMITS["max_per_platform"]:
-@@ -119,9 +135,10 @@ async def run(email, password):
+@@ -119,9 +179,10 @@ async def run(email, password):
                  loc = location.lower()
                  # Naukri URL: /react-developer-jobs-in-pune  or  /react-developer-jobs
                  if loc == "remote":
@@ -253,16 +299,53 @@ index ffc5f2d..f39861c 100644
  
                  print(f"\n🔍 Naukri: '{keyword}' in {location}")
                  try:
-@@ -146,7 +163,7 @@ async def run(email, password):
-                             job_title = (await title_el.inner_text()).strip()
-                             job_url = await title_el.get_attribute("href")
+@@ -133,30 +194,26 @@ async def run(email, password):
+                         await page.keyboard.press("End")
+                         await page.wait_for_timeout(1000)
  
+-                    job_cards = await page.query_selector_all("article.jobTuple, div.srp-jobtuple-wrapper")
+-                    print(f"   Found {len(job_cards)} listings")
+-
+-                    for card in job_cards:
++                    if not await clear_or_wait(page):
++                        continue
++                    rows = await page.evaluate("""() => [...document.querySelectorAll('article.jobTuple, div.srp-jobtuple-wrapper')].map(c => {
++                        const a = c.querySelector('a.title, a.jobTitle');
++                        const co = c.querySelector('a.comp-name, a.subTitle, a.companyInfo');
++                        const lo = c.querySelector('span.locWdth, li.location');
++                        return {title: a ? a.innerText : '', url: a ? a.href : '', company: co ? co.innerText : '',
++                                location: lo ? lo.innerText : ''};
++                    })""")
++                    cards = unique_cards(rows)
++                    print(f"   Found {len(cards)} listings")
++
++                    for card in cards:
+                         if count >= LIMITS["max_per_platform"]:
+                             break
+                         try:
+-                            title_el = await card.query_selector("a.title, a.jobTitle")
+-                            if not title_el:
+-                                continue
+-                            job_title = (await title_el.inner_text()).strip()
+-                            job_url = await title_el.get_attribute("href")
+-
 -                            company_el = await card.query_selector("a.subTitle, a.companyInfo")
-+                            company_el = await card.query_selector("a.comp-name, a.subTitle, a.companyInfo")
-                             company = (await company_el.inner_text()).strip() if company_el else ""
+-                            company = (await company_el.inner_text()).strip() if company_el else ""
+-
+-                            loc_el = await card.query_selector("span.locWdth, li.location")
+-                            job_loc = (await loc_el.inner_text()).strip() if loc_el else location
+-
+-                            result = await apply_to_job(page, job_url, job_title, company, job_loc)
+-                            if result:
++                            if await apply_to_job(page, card["url"], card["title"], card["company"], card["location"] or location):
+                                 count += 1
+-
+                         except Exception as e:
++                            print(f"  ⚠️ Error: {card['title']} — {e}")
+                             continue
  
-                             loc_el = await card.query_selector("span.locWdth, li.location")
-@@ -165,6 +182,6 @@ async def run(email, password):
+                     await asyncio.sleep(LIMITS["delay_between_searches"])
+@@ -165,6 +222,6 @@ async def run(email, password):
                      print(f"  ⚠️ Search error: {e}")
                      continue
  

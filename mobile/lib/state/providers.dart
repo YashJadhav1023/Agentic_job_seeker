@@ -125,3 +125,10 @@ final alarmsProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) as
   if (r.isError) throw ApiException(r.error ?? 'alarm_list failed');
   return (r.result as Map).cast<String, dynamic>();
 });
+
+/// Open "the bot needs you" requests (a site wants your login or a human check during a run).
+final attentionProvider = FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
+  final r = await requireClient(ref).call('attention_list');
+  if (r.isError) return const [];
+  return (((r.result as Map?)?['requests'] as List?) ?? const []).cast<Map<String, dynamic>>();
+});

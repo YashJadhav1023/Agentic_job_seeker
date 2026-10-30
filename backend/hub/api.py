@@ -227,6 +227,23 @@ def create_app() -> FastAPI:
         r.headers["Cache-Control"] = "no-store"
         return r
 
+    @app.get("/api/v1/attention/open")
+    def attention_open(req: Request, id: int = 0, k: str = ""):
+        """Link from a "job bot needs you" notification: opens the remote browser where the bot waits on a login or a
+        human check. Valid only while that request is open (signed with the API token, expires with the request)."""
+        import attention
+        ip = _client_ip(req)
+        lockout.check(ip)
+        if not attention.link_ok(id, k):
+            lockout.fail(ip)
+            raise HTTPException(403, "this request is finished or expired")
+        r = RedirectResponse(browser_access.vnc_url(os.environ.get("JOBHUB_VNC_PASSWORD", "")), status_code=303)
+        r.set_cookie(browser_access.COOKIE, browser_access.cookie_value(), max_age=browser_access.COOKIE_TTL, path="/browser",
+                     httponly=True, secure=True, samesite="lax")
+        r.headers["Referrer-Policy"] = "no-referrer"
+        r.headers["Cache-Control"] = "no-store"
+        return r
+
     @app.get("/internal/browser-auth")
     def browser_auth(req: Request):
         """Called by Caddy (forward_auth) before it serves /browser/*: 204 only with a valid ticket cookie."""

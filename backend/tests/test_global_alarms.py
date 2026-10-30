@@ -132,8 +132,10 @@ def test_global_search_saves_scores_and_ranks(prof, monkeypatch):
                                 "location": "Pune", "posted": "", "description": "Kubernetes Terraform Docker AWS CI/CD " * 10, "apply_type": "unknown"})
         return {"jobs": jobs, "filtered_out_by_title": 3}
 
-    out = globalsearch.run({"sites": ["linkedin", "naukri"], "max_pairs": 2}, search=fake, log=lambda m: None)
+    out = globalsearch.run({"sites": ["linkedin", "naukri"], "max_pairs": 2, "locations": ["Pune", "Mumbai"]}, search=fake,
+                           log=lambda m: None)
     assert len(calls) == 2 and calls[0]["sites"] == ["linkedin", "naukri"] and calls[0]["save"] is True
+    assert {c["location"] for c in calls} == {"Pune", "Mumbai"}   # every chosen city, keywords rotate
     assert out["found"] == 4
     res = json.loads(next(globalsearch.RESULTS.glob("*.json")).read_text())
     scores = [j["score"] for j in res["jobs"]]

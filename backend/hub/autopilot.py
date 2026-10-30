@@ -34,8 +34,8 @@ RESTRICT_RX = re.compile(r"restrict|unusual activity|security verification|captc
                          r"too many requests|\b429\b|daily limit|easy apply limit|access denied|account.{0,20}(?:suspend|limit)|"
                          r"session (?:has )?expired|log ?in required|please log ?in", re.I)
 DEFAULTS = {"min_score": 45, "max_discover": 30, "per_query": 8, "max_emails_per_run": 8, "send_window": None, "send_days": None,
-            "apply_limits": {"naukri": 10, "linkedin": 5}, "platform_cooldown_hours": 24, "job_age_days": 7,
-            "max_search_queries": 6, "career_apply": True, "career_apply_max_per_day": 5, "career_apply_max_per_run": 3,
+            "apply_limits": {"naukri": 10, "linkedin": 5}, "platform_cooldown_hours": 24, "job_age_days": 1, "alert_score": 85,
+            "max_search_queries": 6, "career_apply": True, "career_apply_max_per_day": 40, "career_apply_max_per_run": 10,
             "career_apply_company_days": 30, "career_apply_retry_days": 3, "career_apply_max_attempts": 2,
             "scan_posts": False, "use_jobspy": False, "jobspy_sites": [], "schedule_every_hours": 0,
             "company_blocklist": ["jobgether"], "max_years_tolerance": 1, "polish_model": "", "max_lookups": 15,
@@ -284,7 +284,24 @@ def score_new(profile: dict, c: dict) -> dict:
         else:
             set_job(j["id"], status="scored", score=sc, matched=json.dumps(matched), reason="")
             out["scored"] += 1
+            if sc >= float(c.get("alert_score") or 101):
+                high_match_alert(profile, j, sc, matched)
     return out
+
+
+def high_match_alert(profile: dict, j: dict, sc: float, matched: list) -> bool:
+    """One push per job (Telegram / ntfy) for a very strong match, so you can look at it while it is fresh."""
+    k = f"alerted:{j['id']}"
+    if core.kv_get(k):
+        return False
+    core.kv_set(k, core.now_iso())
+    try:
+        import notify
+        return bool(notify.push(profile, f"Strong match {int(sc)}%: {j.get('title')} @ {j.get('company')}",
+                                f"{j.get('location') or ''} | matches {', '.join(matched[:6])}. The bot applies within your caps; "
+                                "tap to open the job.", j.get("apply_url") or j.get("url") or ""))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 # ---------------------------------------------------------------- platform apply (existing bots) + restriction detection

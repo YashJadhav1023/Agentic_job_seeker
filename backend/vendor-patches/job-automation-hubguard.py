@@ -1,5 +1,5 @@
 """job-hub guard: title relevance + dry-run, driven by env set by the hub adapter."""
-import os, re
+import os, re, sys, time
 
 def _rx(name, default):
     v = os.getenv(name, default)
@@ -95,19 +95,24 @@ async def fill_all(target, rules, cover=None,
 
 
 async def wait_for_login(page, url, is_logged_in, timeout=600):
-    """Open url; if not logged in, wait (up to timeout s) for the USER to log in manually in the visible window.
-    Headless runs cannot be logged into, so they stop immediately and point at login_platform."""
+    """Open url; if not logged in, ask the USER to log in in the visible window (phone notification with a link to the
+    remote browser when the hub's human help is on) and wait. Headless runs cannot be logged into: they stop at once."""
     await page.goto(url, wait_until="domcontentloaded")
     await page.wait_for_timeout(3000)
-    waited = 0
-    while not is_logged_in(page.url):
+    if not is_logged_in(page.url):
         if HEADLESS:
             raise RuntimeError("saved session expired or missing - run login_platform, then re-run apply_jobs")
-        if waited == 0:
+        site = re.sub(r"^www\.|\..*$", "", re.sub(r"^https?://", "", url)).capitalize() or "the site"
+
+        async def logged_in():
+            return is_logged_in(page.url)
+        if not await wait_for_human(page, site, "login", f"{site} asks you to sign in again", logged_in):
+            waited = 0
             print("🔐 Not logged in. Log in manually in the Chrome window (Google/OTP are fine); waiting...", flush=True)
-        if waited >= timeout:
-            raise RuntimeError("login timeout - run login_platform first")
-        await asyncio.sleep(5); waited += 5
+            while not is_logged_in(page.url):
+                if waited >= timeout:
+                    raise RuntimeError("login timeout - run login_platform first")
+                await asyncio.sleep(5); waited += 5
     print("✅ Logged-in session found", flush=True)
 
 
@@ -141,3 +146,64 @@ def external_only(button_texts) -> bool:
     texts = [(t or "").strip().lower() for t in button_texts]
     plain_apply = any(t in ("apply", "apply now", "easy apply") for t in texts)
     return any(EXTERNAL_RX.search(t) for t in texts) and not plain_apply
+
+
+# ---------------------------------------------------------------- human help (login / "are you human" checks)
+# The bot never tries to get past such a check itself: it asks the user (phone notification with a link to the remote
+# browser that shows this very window), waits while the user finishes the step, then carries on.
+HUMAN_CHECK_RX = re.compile(r"let us know you(?:'|’)?re human|verify (?:that )?you are (?:a )?human|are you a robot|"
+                            r"press (?:&|and) hold|checking your browser|security check|^access denied", re.I | re.M)
+NAUKRI_LOGIN_RX = re.compile(r"/nlogin/|login\.naukri\.com", re.I)
+
+
+def human_check(text: str) -> bool:
+    return bool(HUMAN_CHECK_RX.search((text or "")[:3000]))
+
+
+def _attention():
+    hub = os.getenv("JOBHUB_HUB_DIR", "")
+    if hub and hub not in sys.path:
+        sys.path.insert(0, hub)
+    try:
+        import attention
+        return attention
+    except Exception:  # noqa: BLE001 - outside the hub (plain upstream use): no human help
+        return None
+
+
+async def wait_for_human(page, site: str, kind: str, reason: str, is_clear, job: str = "", poll: float = 5.0) -> bool:
+    """Ask the user for help and wait until `await is_clear()` is True. False when help is off/unavailable or times out."""
+    att = _attention()
+    if att is None or HEADLESS or not att.available():
+        return False
+    rid = att.request(kind, site, page.url, reason, job)
+    print(f"  🙋 {site}: {reason}. Notification sent (request #{rid}); waiting for you in the remote browser...", flush=True)
+    while True:
+        r = att.get(rid)
+        if not r or r["status"] in ("skipped", "expired"):
+            print(f"  ⌛ no help in time for request #{rid}, moving on", flush=True)
+            return False
+        try:
+            if await is_clear():
+                att.resolve(rid, "done")
+                print(f"  ✅ thanks, continuing (request #{rid})", flush=True)
+                return True
+        except Exception:  # noqa: BLE001 - the page navigates while the user works in it
+            pass
+        if time.time() >= r["expires"]:
+            att.resolve(rid, "expired")
+            continue
+        await asyncio.sleep(poll)
+
+
+def unique_cards(rows: list) -> list:
+    """Cards read from a results page -> [{title,url,company,location}] with a URL, first occurrence only."""
+    out, seen = [], set()
+    for r in rows:
+        u = (r.get("url") or "").split("?")[0]
+        if not u or u in seen or not (r.get("title") or "").strip():
+            continue
+        seen.add(u)
+        out.append({"title": r["title"].strip(), "url": r["url"], "company": (r.get("company") or "").strip(),
+                    "location": (r.get("location") or "").strip()})
+    return out

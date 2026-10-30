@@ -15,6 +15,7 @@ applicant:
   headline: DevOps & Cloud Engineer
   experience_years: "1"
   willing_to_relocate: "Yes"
+  gender: ""                            # optional; filled into "Gender" questions. Empty = "prefer not to say" when offered
   education: {highest_level: "Bachelor's", degree: "B.Tech Computer Science", university: "Your College", graduation_year: "2025", gpa: ""}
   cover_note: ""                        # optional short note for application forms; empty = built from this profile
 
@@ -87,8 +88,8 @@ autopilot:
                                   # Workable), web search, then the careers page via Firecrawl. Not found -> email.
   career_resolve_max_per_run: 15
   career_resolve_firecrawl: true  # uses Firecrawl credits; false = free sources only
-  career_apply_max_per_run: 3     # forms per autopilot run
-  career_apply_max_per_day: 5     # forms per day (also counts toward limits.max_applies_per_day_total)
+  career_apply_max_per_run: 10    # forms per autopilot run
+  career_apply_max_per_day: 40    # forms per day (also counts toward limits.max_applies_per_day_total)
   career_apply_company_days: 30   # at most one form per company within this many days
   career_apply_retry_days: 3      # wait before retrying a form that could not be completed
   career_apply_max_attempts: 2    # give up on a job after this many failed attempts (it then falls back to email)
@@ -118,3 +119,14 @@ post_scan:
 
 notifications:
   telegram_chat_id: ""            # with secret telegram_bot_token: one Telegram message per matching hiring post
+  # Phone push via ntfy (open source; install the ntfy app and subscribe to this topic). Use a long random topic name:
+  # anyone who knows it can read the alerts. Used for "the bot needs you" (login / human check during a run).
+  ntfy_topic: ""
+  ntfy_server: https://ntfy.sh
+
+human_help:
+  # When a site needs a login (Workday, Deloitte, ...) or shows an "are you human" check (Naukri), the run pauses, you get
+  # a notification with a link to the remote browser, you finish that step yourself, and the bot carries on.
+  # The bot never tries to get past such checks by itself.
+  enabled: true
+  wait_minutes: 15

@@ -278,6 +278,16 @@ def harvest_website_emails(domain: str, max_pages: int = 10) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------- Pattern Inference (Verdict style)
+_FIRST_NAMES = re.compile(r"^(rahul|priya|amit|ankit|neha|pooja|rohit|sneha|vikas|yash|arjun|karan|riya|sachin|aditya|"
+                          r"ravi|anil|sunil|deepak|manish|nikhil|akash|vivek|suresh|ramesh|kiran|john|james|david|sarah|mary)")
+
+
+def _looks_initial(local: str) -> bool:
+    """'rahulk' = known first name + one extra letter."""
+    m = _FIRST_NAMES.match(local)
+    return bool(m) and len(local) == m.end() + 1
+
+
 def infer_email_pattern(published_emails: List[str], domain: str) -> Optional[str]:
     """Infer common naming pattern from observed corporate emails ({first}.{last}, {first[0]}{last}, etc.)."""
     patterns: Dict[str, int] = {}
@@ -298,8 +308,9 @@ def infer_email_pattern(published_emails: List[str], domain: str) -> Optional[st
         elif "_" in local:
             patterns["{first}_{last}"] = patterns.get("{first}_{last}", 0) + 1
         else:
-            # Single word: first name or first initial + last name
-            patterns["{first}"] = patterns.get("{first}", 0) + 1
+            # Single word: plain first name, or first name + last initial ("rahulk")
+            p = "{first}{last[0]}" if _looks_initial(local) else "{first}"  # only orders the guesses; all are tried
+            patterns[p] = patterns.get(p, 0) + 1
 
     if patterns:
         best = max(patterns.items(), key=lambda kv: kv[1])[0]
@@ -325,6 +336,7 @@ def generate_candidate_emails(name: str, domain: str, pattern: Optional[str] = N
             ("{first[0]}{last}", f"{first[0]}{last}@{domain}"),
             ("{first}", f"{first}@{domain}"),
             ("{first}{last}", f"{first}{last}@{domain}"),
+            ("{first}{last[0]}", f"{first}{last[0]}@{domain}"),
             ("{first[0]}.{last}", f"{first[0]}.{last}@{domain}"),
             ("{first}_{last}", f"{first}_{last}@{domain}"),
             ("{last}.{first}", f"{last}.{first}@{domain}"),
@@ -593,7 +605,7 @@ def find_company_emails(
                         v = {"status": "error"}
                     local = p_email.split("@")[0]
                     if v.get("confirmed") or v.get("status") in ("valid", "catch_all"):
-                        conf = "high" if v.get("confirmed") else ("medium" if v.get("status") == "catch_all" else "low")
+                        conf = "high" if v.get("confirmed") else "low"  # a catch-all domain accepts anything: a guess there is unverified
                         add_result(
                             p_email,
                             category="role_inbox",

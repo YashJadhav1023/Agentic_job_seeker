@@ -312,7 +312,9 @@ def find_contacts(company: str, jd_text: str = "", site_hint: str = "", mail_fro
                     add(e, "medium", "role_inbox", res)
                     break
                 if res == "catch_all":
-                    add(e, "medium", "role_inbox", res)
+                    # the domain accepts every address, so this inbox may not exist or be read: never spend the daily
+                    # email cap on it (low = not auto-sent)
+                    add(e, "low", "role_inbox", res)
                     break
                 if res == "unknown":
                     add(e, "low", "role_inbox", res)

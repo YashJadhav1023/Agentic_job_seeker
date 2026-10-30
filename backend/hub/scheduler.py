@@ -280,6 +280,11 @@ def _queue_loop() -> None:
             core.dispatch_queue()
         except Exception as e:  # noqa: BLE001
             print(f"queue dispatch failed: {type(e).__name__}: {e}", flush=True)
+        try:
+            import attention
+            attention.notify_pending()  # "needs you" requests from bots that cannot send notifications themselves
+        except Exception as e:  # noqa: BLE001
+            print(f"attention notify failed: {type(e).__name__}: {e}", flush=True)
         time.sleep(QUEUE_TICK_SEC)
 
 

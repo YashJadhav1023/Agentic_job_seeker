@@ -150,7 +150,7 @@ BUTTONS_JS = r"""
 }
 """
 
-APPLY_RX = re.compile(r"^(apply( now| here| today| for this (job|position|role)| to this (job|position|role))?|i'?m interested|"
+APPLY_RX = re.compile(r"^(apply( now| here| today| manually| for this (job|position|role)| to this (job|position|role))?|i'?m interested|"
                       r"start (your )?application|apply on (the )?(company|employer)(?:'s)? (site|website))\W*$", re.I)
 NEXT_RX = re.compile(r"^(next|continue|save (and|&) continue|proceed|review( application)?|next step)\b", re.I)
 SUBMIT_RX = re.compile(r"^(submit( (my |your )?application)?|send( (my |your )?application)?|apply( now)?|finish|"
@@ -158,12 +158,20 @@ SUBMIT_RX = re.compile(r"^(submit( (my |your )?application)?|send( (my |your )?a
 COOKIE_RX = re.compile(r"^(accept( all)?( cookies)?|allow all( cookies)?|i agree|agree|got it|ok(ay)?)\W*$", re.I)
 SUCCESS_RX = re.compile(r"thank you|thanks for (applying|your interest)|application (has been |was |is )?(received|submitted|sent|complete)|"
                         r"successfully (submitted|applied|sent)|(we(?:'ve| have)|has been) received your application|"
-                        r"application (is )?under review|you have applied", re.I)
+                        r"application (is )?under review|you have applied|your response has been recorded", re.I)
 LOGIN_WALL_RX = re.compile(r"(sign|log) ?in to (apply|continue)|create (an )?account to apply|register to apply|"
                            r"you (must|need to) (be )?(log|sign)ged? ?in", re.I)
 CLOSED_RX = re.compile(r"no longer (accepting|available|open|active)|position (has been |is )?(filled|closed)|job (is |has been )?(closed|expired|removed)|"
                        r"this (job|position|role|posting) (is|has) (closed|expired|been (filled|removed))|(page|job) not found|404", re.I)
-SUCCESS_URL_RX = re.compile(r"thank|confirm|success|submitted|applied|complete", re.I)
+SUCCESS_URL_RX = re.compile(r"thank|confirm|success|submitted|applied|complete|formresponse", re.I)
+# Hosted form builders: the form is the whole page and rarely repeats the job title (posts link straight to them).
+FORM_HOST_RX = re.compile(r"^(forms\.gle|docs\.google\.com/forms|forms\.office\.com|[\w-]+\.typeform\.com|form\.jotform\.com|"
+                          r"forms\.zohopublic\.\w+|tally\.so|airtable\.com/app\w+/shr|[\w-]+\.paperform\.co)", re.I)
+GENDER_RX = re.compile(r"gender|\bsex\b", re.I)
+
+
+def is_form_host(url: str) -> bool:
+    return bool(FORM_HOST_RX.match(re.sub(r"^https?://(www\.)?", "", url or "")))
 
 
 # ---------------------------------------------------------------- facts about the candidate
@@ -207,6 +215,52 @@ def education_from_text(text) -> dict:
             "graduation_year": years[-1] if years else "", "gpa": gpa.group(1) if gpa else ""}
 
 
+DEGREE_ALIASES = [
+    (r"\bb\.?\s?tech\b|bachelor of technology", ["B.Tech", "BTech", "B. Tech", "Bachelor of Technology"]),
+    (r"\bb\.?\s?e\b\.?|bachelor of engineering", ["BE", "B.E", "B.E.", "Bachelor of Engineering"]),
+    (r"\bm\.?\s?tech\b|master of technology", ["M.Tech", "MTech", "Master of Technology"]),
+    (r"\bm\.?\s?e\b\.?|master of engineering", ["ME", "M.E", "Master of Engineering"]),
+    (r"\bb\.?\s?sc\b|bachelor of science", ["B.Sc", "BSc", "Bachelor of Science"]),
+    (r"\bm\.?\s?sc\b|master of science", ["M.Sc", "MSc", "Master of Science"]),
+    (r"\bbca\b", ["BCA"]), (r"\bmca\b", ["MCA"]), (r"\bmba\b", ["MBA"]),
+    (r"\bb\.?\s?com\b", ["B.Com", "BCom"]), (r"diploma", ["Diploma"]),
+]
+
+
+def degree_wants(degree: str) -> list:
+    """Ways a form may list the candidate's degree: 'B.Tech Computer Science' -> ['B.Tech Computer Science', 'B.Tech', ...]."""
+    out = [degree] if degree else []
+    for rx, names in DEGREE_ALIASES:
+        if re.search(rx, degree or "", re.I):
+            out += names
+            break
+    return out
+
+
+def branch_of(degree: str) -> str:
+    """'B.Tech Computer Science' -> 'Computer Science'; 'Bachelor of Engineering (Computer)' -> 'Computer'."""
+    s = degree or ""
+    for rx, _ in DEGREE_ALIASES:
+        s = re.sub(rx, " ", s, flags=re.I)
+    s = re.sub(r"[()\[\],:|-]", " ", s)
+    s = re.sub(r"^\s*(in|of)\b", " ", s.strip(), flags=re.I)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def best_overlap(options: list, value: str):
+    """Option sharing the most words with value (at least one), fewest extra words on a tie. For branch / stream lists."""
+    want = {w for w in re.findall(r"[a-z]+", norm(value)) if len(w) > 2 and w not in STOPWORDS and w != "engineering"}
+    best, key = None, None
+    for i, o in enumerate(options):
+        if o.get("placeholder"):
+            continue
+        words = set(re.findall(r"[a-z]+", norm(o.get("text", ""))))
+        hit = len(want & words)
+        if hit and (key is None or (hit, -len(words)) > key):
+            best, key = i, (hit, -len(words))
+    return best
+
+
 def facts(profile: dict, resume_text: str = "") -> dict:
     """Everything a form may ask for, taken from profile.yaml. Missing facts are simply absent (-> field unresolved)."""
     a = _as_dict(profile.get("applicant"))
@@ -228,6 +282,7 @@ def facts(profile: dict, resume_text: str = "") -> dict:
         "current_ctc": comp.get("current_ctc_inr"), "notice_days": comp.get("notice_period_days"),
         "degree_level": edu.get("highest_level", ""), "degree": edu.get("degree", ""), "university": edu.get("university", ""),
         "grad_year": edu.get("graduation_year", ""), "gpa": edu.get("gpa", ""),
+        "branch": edu.get("branch") or branch_of(edu.get("degree", "")), "gender": str(a.get("gender") or "").strip(),
         "resume_path": a.get("resume_path", ""), "cover_note": (a.get("cover_note") or "").strip(),
         "skills": ", ".join((profile.get("search") or {}).get("skills") or []), "resume_text": resume_text,
     }
@@ -253,7 +308,7 @@ def blob(d: dict) -> str:
 SKILL_EXP_RX = re.compile(r"(experience|exp\.?) (with|in|using|on|of working with)\s+(?!total\b|overall\b|relevant\b|work\b|professional\b|the industry|years?\b|yrs?\b|months?\b)\w|"
                           r"years? of (?!total\b|overall\b|relevant\b|work\b|professional\b|related\b|industry\b|experience\b|exp\b)[a-z+#.\\-]+(?: [a-z+#.\\-]+)? (experience|exp)\b", re.I)
 NO_LLM = {"first", "last", "name", "email", "phone", "linkedin", "github", "expected_ctc", "current_ctc", "notice", "grad_year",
-          "gpa", "state", "country", "city", "current_company", "current_title", "university", "degree", "degree_level"}
+          "gpa", "state", "country", "city", "current_company", "current_title", "university", "degree", "degree_level", "branch"}
 
 
 DEMOGRAPHIC_RX = re.compile(r"gender|\bsex\b|race|ethnic|veteran|disabilit|sexual orientation|pronoun|religio|caste|marital|"
@@ -290,7 +345,8 @@ RULES = [
     ("prev_employee", re.compile(r"(previously|ever|formerly) (been )?(employed|worked)|worked (for|at|with) us|current(ly)? (an )?employee|former employee")),
     ("hear", re.compile(r"how did you (hear|find|learn)|where did you (hear|find)|source of|referr?ed by|referral")),
     ("degree_level", re.compile(r"highest (level of )?(education|qualification|degree)|education level|qualification")),
-    ("degree", re.compile(r"degree|major|field of study|discipline|course")),
+    ("branch", re.compile(r"\bbranch\b|speciali[sz]ation|\bstream\b|\bmajor\b|field of study|discipline")),
+    ("degree", re.compile(r"degree|course")),
     ("university", re.compile(r"universit|college|school|institut")),
     ("grad_year", re.compile(r"graduat|passing year|year of (passing|completion)")),
     ("gpa", re.compile(r"gpa|cgpa|percentage|grade")),
@@ -358,7 +414,9 @@ def pick_option(options: list, wants: list):
         w = norm(w)
         if not w:
             continue
-        for test in (lambda t: t == w, lambda t: t.startswith(w + " ") or t.startswith(w + ",") or t.startswith(w + "-"),
+        cw = re.sub(r"[^a-z0-9]", "", w)
+        for test in (lambda t: t == w, lambda t: bool(cw) and re.sub(r"[^a-z0-9]", "", t) == cw,
+                     lambda t: t.startswith(w + " ") or t.startswith(w + ",") or t.startswith(w + "-"),
                      lambda t: re.search(r"\b" + re.escape(w) + r"\b", t) is not None):
             for i in ok:
                 if test(texts[i]):
@@ -404,7 +462,36 @@ def yesno(text_options: list, yes: bool):
 
 
 def decide(d: dict, F: dict, job: dict, ask=None) -> tuple:
-    """-> (action, value, note). action: fill | select | choose | check | upload | skip | unresolved."""
+    """-> (action, value, note). action: fill | select | choose | check | upload | skip | unresolved.
+
+    A question the profile cannot answer gets the answer you saved for it earlier (form_qa), if there is one."""
+    out = _decide(d, F, job, ask)
+    if out[0] != "unresolved" or not F.get("qa") or d["kind"] in ("file", "checkbox"):
+        return out
+    import form_qa
+    ans = F["qa"].get(form_qa.key(d.get("label", "")))
+    if not ans:
+        return out
+    opts = d.get("options") or []
+    if opts:
+        i = pick_option(opts, [ans])
+        return ("select" if d["kind"] == "select" else "choose", i, "saved answer") if i is not None else out
+    return ("fill", ans[: d["maxlength"]] if d.get("maxlength") else ans, "saved answer")
+
+
+def tailored_cover(F: dict, job: dict) -> str:
+    """Cover note for this job: the profile note plus the candidate's own skills that this JD asks for (never others)."""
+    jd = norm(f"{job.get('title', '')} {job.get('description', '')}")
+    mine = [s.strip() for s in (F.get("skills") or "").split(",") if s.strip()]
+    hits = [s for s in mine if re.search(r"(?<![a-z0-9])" + re.escape(s.lower()) + r"(?![a-z0-9])", jd)][:5]
+    note = F.get("cover_note") or ""
+    if hits and job.get("company"):
+        note += (f" For the {job.get('title') or 'role'} at {job['company']}, my hands-on work with "
+                 f"{', '.join(hits[:-1]) + ' and ' + hits[-1] if len(hits) > 1 else hits[0]} matches what you are looking for.")
+    return note.strip()
+
+
+def _decide(d: dict, F: dict, job: dict, ask=None) -> tuple:
     kind, req = d["kind"], d.get("required")
     it = intent(d)
     label = d.get("label", "")
@@ -434,6 +521,14 @@ def decide(d: dict, F: dict, job: dict, ask=None) -> tuple:
             return ("skip", None, "marketing opt-in left off")
         return unresolved("checkbox question") if req else ("skip", None, "optional checkbox")
 
+    if it == "demographic" and GENDER_RX.search(label) and F.get("gender"):
+        g = F["gender"]
+        if opts:
+            i = pick_option(opts, [g, g[:1]])
+            if i is not None:
+                return ("select" if kind == "select" else "choose", i, "gender")
+        elif kind in ("text", "textarea"):
+            return ("fill", g, "gender")
     if it == "demographic":
         if opts:
             i = pick_option(opts, ["prefer not to say", "decline", "i don't wish to answer", "prefer not"])
@@ -446,11 +541,21 @@ def decide(d: dict, F: dict, job: dict, ask=None) -> tuple:
     value = None
     want_yes = None
     if it in ("first", "last", "name", "email", "linkedin", "github", "current_company", "current_title", "university", "degree",
-              "state", "country", "city", "skills", "cover"):
+              "state", "country", "city", "skills", "cover", "branch"):
         key = {"name": "name", "first": "first", "last": "last", "email": "email", "linkedin": "linkedin", "github": "github",
                "current_company": "company", "current_title": "title", "university": "university", "degree": "degree",
-               "state": "state", "country": "country", "city": "city", "skills": "skills", "cover": "cover_note"}[it]
-        value = F.get(key) or None
+               "state": "state", "country": "country", "city": "city", "skills": "skills", "cover": "cover_note",
+               "branch": "branch"}[it]
+        value = F.get(key) or (branch_of(F.get("degree", "")) if it == "branch" else None) or None
+        if value and opts and it == "degree":
+            i = pick_option(opts, degree_wants(value))
+            if i is not None:
+                return ("select" if kind == "select" else "choose", i, "degree")
+        if value and opts and it == "branch":
+            i = pick_option(opts, [value])
+            i = best_overlap(opts, value) if i is None else i
+            if i is not None:
+                return ("select" if kind == "select" else "choose", i, "branch")
     elif it == "website":
         value = F.get("github") or F.get("linkedin") or None
     elif it == "phone":
@@ -708,61 +813,105 @@ def _new_text(before: str, after: str) -> str:
     return "\n".join(ln.strip() for ln in after.splitlines() if ln.strip() and ln.strip() not in seen)
 
 
-def apply_one(ctx, job: dict, F: dict, dry: bool, ask=None, shot_dir: Path = SHOTS, step_pause_ms: int = 700) -> dict:
+def _wait_render(page, title: str, ms: int = 10000) -> None:
+    """Single-page apps (Workday, Oracle, SuccessFactors) show a shell first and render the job a few seconds later."""
+    end = time.time() + ms / 1000
+    while time.time() < end:
+        body = _blockers(page)["body"]
+        if title_matches(title, body) or CLOSED_RX.search(body) or _find_form(page)[0] is not None:
+            return
+        page.wait_for_timeout(800)
+
+
+def _reach_form(ctx, page, job: dict, res: dict, check_title: bool = True):
+    """Open the application form from where `page` is. -> (page, scope, descs); scope None = res says why."""
+    scope, descs = _find_form(page)
+    if scope is None and check_title:
+        _wait_render(page, job.get("title", ""))
+        scope, descs = _find_form(page)
+    hops = 0
+    if scope is None and check_title:
+        body = _blockers(page)["body"]
+        if CLOSED_RX.search(body):
+            res.update(status="closed", reason="the job is closed / no longer accepting applications")
+            return page, None, []
+        if not (is_form_host(page.url) or is_form_host(job.get("url", ""))) and not title_matches(job.get("title", ""), body):
+            res.update(status="no_form", reason="the page does not mention the job title (wrong or removed page)")
+            return page, None, []
+    while scope is None and hops < 2:  # a job description page: go through its Apply button
+        b = _blockers(page)
+        if b["challenge"]:
+            res.update(status="captcha", reason="CAPTCHA on the page")
+            return page, None, []
+        nxt = _open_apply(ctx, page)
+        if nxt is None:
+            res.update(status="no_form", reason="several Apply buttons: this is a job list, not one job")
+            return page, None, []
+        hops += 1
+        if nxt is not page:
+            page = nxt
+        settle(page)
+        _dismiss_cookies(page)
+        scope, descs = _find_form(page)
+    if scope is None:
+        b = _blockers(page)
+        if b["password"] or LOGIN_WALL_RX.search(b["body"]):
+            res.update(status="login", reason="needs an account / login")
+        elif b["challenge"]:
+            res.update(status="captcha", reason="CAPTCHA on the page")
+        else:
+            res.update(status="no_form", reason="no application form found")
+    return page, scope, descs
+
+
+def apply_one(ctx, job: dict, F: dict, dry: bool, ask=None, shot_dir: Path = SHOTS, step_pause_ms: int = 700, human=None) -> dict:
     """Try to apply to one job. Never raises. Result: {status, reason, filled, steps, screenshot}.
 
     status: applied | dry_filled | unconfirmed | unresolved | captcha | login | no_form | error
+    human(page, kind, reason) -> bool: hand a login wall / CAPTCHA to the user (see attention.py) and wait; True = the user
+    finished it and the run continues on the same page. None = stop at such pages, as before.
     """
     res = {"job_id": job.get("id"), "url": job.get("url"), "status": "error", "reason": "", "filled": 0, "steps": 0, "screenshot": ""}
     page = None
+    asked = set()
+
+    def hand_over(kind: str, reason: str) -> bool:
+        if human is None or kind in asked:
+            return False
+        asked.add(kind)
+        try:
+            return bool(human(page, kind, reason))
+        except Exception:  # noqa: BLE001 - help that fails is no help; the job just stops as before
+            return False
     try:
         page = ctx.new_page()
         page.goto(job["url"], wait_until="domcontentloaded", timeout=45000)
         settle(page)
         _dismiss_cookies(page)
-
-        scope, descs = _find_form(page)
-        hops = 0
+        page, scope, descs = _reach_form(ctx, page, job, res)
+        if scope is None and res["status"] in ("login", "captcha"):
+            kind = "login" if res["status"] == "login" else "human_check"
+            if hand_over(kind, res["reason"]):
+                settle(page)
+                _dismiss_cookies(page)
+                res.update(status="error", reason="")
+                page, scope, descs = _reach_form(ctx, page, job, res, check_title=False)
         if scope is None:
-            body = _blockers(page)["body"]
-            if CLOSED_RX.search(body):
-                res.update(status="closed", reason="the job is closed / no longer accepting applications")
-                return res
-            if not title_matches(job.get("title", ""), body):
-                res.update(status="no_form", reason="the page does not mention the job title (wrong or removed page)")
-                return res
-        while scope is None and hops < 2:  # a job description page: go through its Apply button
-            b = _blockers(page)
-            if b["challenge"]:
-                res.update(status="captcha", reason="CAPTCHA on the page")
-                return res
-            nxt = _open_apply(ctx, page)
-            if nxt is None:
-                res.update(status="no_form", reason="several Apply buttons: this is a job list, not one job")
-                return res
-            hops += 1
-            if nxt is not page:
-                page = nxt
-            settle(page)
-            _dismiss_cookies(page)
-            scope, descs = _find_form(page)
-        if scope is None:
-            b = _blockers(page)
-            if b["password"] or LOGIN_WALL_RX.search(b["body"]):
-                res.update(status="login", reason="needs an account / login")
-            elif b["challenge"]:
-                res.update(status="captcha", reason="CAPTCHA on the page")
-            else:
-                res.update(status="no_form", reason="no application form found")
             return res
 
         for step in range(MAX_STEPS):
             res["steps"] = step + 1
             b = _blockers(page)
             if b["challenge"]:
+                if hand_over("human_check", "CAPTCHA on the form"):
+                    continue
                 res.update(status="captcha", reason="CAPTCHA on the form")
                 return res
             if b["password"]:
+                if hand_over("login", "the form asks to create an account / log in"):
+                    settle(page)
+                    scope = _find_form(page)[0] or scope
+                    continue
                 res.update(status="login", reason="the form asks to create an account / log in")
                 return res
             descs = _collect(scope)
@@ -774,7 +923,17 @@ def apply_one(ctx, job: dict, F: dict, dry: bool, ask=None, shot_dir: Path = SHO
                 elif act != "skip":
                     plan.append((d, act, val))
             if bad:
-                res.update(status="unresolved", reason="required fields not answerable: " + "; ".join(bad[:5]))
+                try:
+                    import form_qa
+                    for d in descs:
+                        if decide(d, F, job, ask)[0] == "unresolved" and d["kind"] not in ("file", "checkbox"):
+                            form_qa.record_unanswered(d.get("label") or d.get("name") or "",
+                                                      [o.get("text", "") for o in d.get("options") or [] if not o.get("placeholder")],
+                                                      job.get("company", ""))
+                except Exception:  # noqa: BLE001 - bookkeeping must not change the result
+                    pass
+                res.update(status="unresolved", reason="required fields not answerable: " + "; ".join(bad[:5]) +
+                           " (saved: answer it once in the app under form_questions and it is reused)")
                 return res
             for d, act, val in plan:
                 if _apply_action(scope, d, act, val):
@@ -843,6 +1002,27 @@ def launch(p, headless: bool = True):
     return p.chromium.launch(headless=headless, args=["--disable-blink-features=AutomationControlled"], **kw)
 
 
+def make_human(profile: dict, job: dict):
+    """human() for apply_one: notify the user and wait in the visible browser (attention.py). None when unavailable."""
+    import attention
+    if not attention.available(profile):
+        return None
+    from urllib.parse import urlparse
+
+    def human(page, kind, reason):
+        site = (urlparse(page.url).hostname or "the site").replace("www.", "")
+        site = "Workday" if "myworkdayjobs" in site else site
+
+        def cleared():
+            b = _blockers(page)
+            if kind == "human_check":
+                return not b["challenge"]
+            return not b["password"] and not LOGIN_WALL_RX.search(b["body"])
+        return attention.ask_and_wait(kind, site, page.url, reason, cleared, job=f"{job.get('title')} @ {job.get('company')}",
+                                      profile=profile, sleep=lambda sec: page.wait_for_timeout(int(sec * 1000)))
+    return human
+
+
 def run_batch(profile: dict, jobs: list, dry: bool, emit=print, pause=(6, 14)) -> list:
     from playwright.sync_api import sync_playwright
     import composer
@@ -851,25 +1031,50 @@ def run_batch(profile: dict, jobs: list, dry: bool, emit=print, pause=(6, 14)) -
     if rp and Path(rp).exists():
         rt = composer.resume_text(rp)
     F = facts(profile, rt)
+    try:
+        import form_qa
+        F["qa"] = form_qa.answers()
+    except Exception:  # noqa: BLE001
+        F["qa"] = {}
     results = []
+    headed = make_human(profile, {}) is not None and not dry
     with sync_playwright() as p:
-        browser = launch(p)
+        if headed:
+            # Visible on the server display (the remote browser) with a saved profile: a login you finish once
+            # (Workday tenant, Deloitte, ...) is remembered for the next jobs on that site.
+            exe = os.environ.get("JOBHUB_CHROME") or None
+            kw = {"executable_path": exe} if exe else {"channel": "chromium"}
+            (ROOT / ".profiles" / "career").mkdir(parents=True, exist_ok=True)
+            browser = None
+            shared = p.chromium.launch_persistent_context(str(ROOT / ".profiles" / "career"), headless=False,
+                                                          args=["--disable-blink-features=AutomationControlled"],
+                                                          viewport={"width": 1280, "height": 860}, locale="en-IN", **kw)
+        else:
+            browser, shared = launch(p), None
         try:
             for j in jobs:
                 if (ROOT / "data" / "STOP").exists():
                     break
-                ctx = browser.new_context(viewport={"width": 1280, "height": 900}, accept_downloads=False, locale="en-IN")
+                ctx = shared or browser.new_context(viewport={"width": 1280, "height": 900}, accept_downloads=False, locale="en-IN")
                 ctx.set_default_timeout(15000)
                 ctx.set_default_navigation_timeout(45000)
                 try:
-                    r = apply_one(ctx, j, F, dry, make_asker(F, j))
+                    Fj = {**F, "cover_note": tailored_cover(F, j)}
+                    r = apply_one(ctx, j, Fj, dry, make_asker(Fj, j), human=make_human(profile, j) if headed else None)
                 finally:
-                    ctx.close()
+                    if shared is None:
+                        ctx.close()
+                    else:
+                        for pg in list(shared.pages)[1:]:
+                            try:
+                                pg.close()
+                            except Exception:  # noqa: BLE001
+                                pass
                 results.append(r)
                 emit("RESULT " + json.dumps(r))
                 time.sleep(random.uniform(*pause))
         finally:
-            browser.close()
+            (shared or browser).close()
     return results
 
 

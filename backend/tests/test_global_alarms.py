@@ -318,11 +318,11 @@ def test_queue_endpoint_and_runs_list_show_waiting_runs(client, monkeypatch):
         return r
 
     monkeypatch.setattr(core, "run_status", fake)
-    for k in ("career", "hr-pune", "verify"):
+    for k in ("career", "hr-pune", "verify", "hr-chennai", "hr-kolkata", "hr-hyderabad"):
         running.add(core.spawn(k, [_s.executable, "-c", "pass"], core.ROOT, {}, True, {})["run_id"])
     waiting = core.spawn("hr-mumbai", [_s.executable, "-c", "pass"], core.ROOT, {}, True, {})
     q = client.get("/api/v1/queue", headers=H).json()
-    assert q["max_parallel"] == 3 and len(q["running"]) == 3 and q["queued"][0]["run_id"] == waiting["run_id"]
+    assert q["max_parallel"] == 6 and len(q["running"]) == 6 and q["queued"][0]["run_id"] == waiting["run_id"]
     runs = client.get("/api/v1/runs", headers=H).json()["runs"]
     assert runs[0]["run_id"] == waiting["run_id"] and runs[0]["state"] == "queued"
 

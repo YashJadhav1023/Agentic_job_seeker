@@ -188,11 +188,14 @@ async def scan(queries, sc: dict | None = None):
     p = core.load_profile()
     sc = sc or scan_cfg(p)
     raw, seen_now = [], set()
+    import moli_client
     async with async_playwright() as pw:
-        ctx = await pw.chromium.launch_persistent_context(
-            str(core.ROOT / ".profiles" / "linkedin"), headless=True, channel="chromium", user_agent=UA,
-            args=["--disable-blink-features=AutomationControlled"], viewport={"width": 1366, "height": 900})
-        page = ctx.pages[0]
+        ctx = await moli_client.async_moli_context(pw, platform="linkedin", user_agent=UA, viewport={"width": 1366, "height": 900})
+        if not ctx:
+            ctx = await pw.chromium.launch_persistent_context(
+                str(core.ROOT / ".profiles" / "linkedin"), headless=True, channel="chromium", user_agent=UA,
+                args=["--disable-blink-features=AutomationControlled"], viewport={"width": 1366, "height": 900})
+        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
         ctx.on("page", lambda x: asyncio.ensure_future(x.close()) if x is not page else None)
         targets = [("feed", "https://www.linkedin.com/feed/", sc["feed_scrolls"])] if sc["include_feed"] else []
         targets += [(q, "https://www.linkedin.com/search/results/content/?keywords=" + urllib.parse.quote(q)

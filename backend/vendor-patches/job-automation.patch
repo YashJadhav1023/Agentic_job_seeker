@@ -1,3 +1,27 @@
+diff --git a/applied_20260322_1114.csv b/applied_20260322_1114.csv
+deleted file mode 100644
+index 15fe8a6..0000000
+--- a/applied_20260322_1114.csv
++++ /dev/null
+@@ -1,14 +0,0 @@
+-Title,Company,Location,Platform,Status,Applied At,URL
+-Node js developer,,Bengaluru,Naukri,Applied,2026-03-22 11:09:09,https://www.naukri.com/job-listings-node-js-developer-ideslabs-private-limited-bengaluru-0-to-2-years-180326916765
+-Full Stack Developer,,Mumbai,Naukri,Applied,2026-03-22 11:08:46,https://www.naukri.com/job-listings-full-stack-developer-edulab-mumbai-0-to-3-years-180326500470
+-Fullstack Developer,,"Pune, Chennai",Naukri,Applied,2026-03-22 11:08:22,https://www.naukri.com/job-listings-fullstack-developer-revature-pune-chennai-0-to-1-years-160326010761
+-Full Stack Developer,,Gurugram,Naukri,Applied,2026-03-22 11:07:58,https://www.naukri.com/job-listings-full-stack-developer-antino-labs-gurugram-0-to-3-years-190326502950
+-Associate Software Engineer - Automation Tester,,Mumbai,Naukri,Applied,2026-03-22 11:06:46,https://www.naukri.com/job-listings-associate-software-engineer-automation-tester-aegon-religare-life-insurance-company-ltd-mumbai-0-to-1-years-200326504580
+-Fullstack Developer,,"Pune, Pimpri-Chinchwad",Naukri,Applied,2026-03-22 11:06:20,https://www.naukri.com/job-listings-fullstack-developer-tele-infotech-pimpri-chinchwad-pune-0-to-2-years-220326000054
+-AI Developer,,Bengaluru,Naukri,Applied,2026-03-22 11:05:39,https://www.naukri.com/job-listings-ai-developer-nextwebi-it-solutions-bengaluru-0-to-2-years-180326500060
+-Walk-in || Fresher (Non-Voice process) (Navi Mumbai)-Sagility,,Mumbai,Naukri,Applied,2026-03-22 11:05:13,https://www.naukri.com/job-listings-fresher-non-voice-process-navi-mumbai-sagility-sagility-india-navi-mumbai-0-to-0-years-210326008665
+-Walk-in || Fullstack Developer Intern,,Remote,Naukri,Applied,2026-03-22 11:04:35,https://www.naukri.com/job-listings-fullstack-developer-intern-vmax-india-hyderabad-0-to-1-years-170326030130
+-Full-Stack NestJS Developer,,"Pune, Mumbai, Bengaluru, Hyderabad, Chennai, Kolkata, New Delhi",Naukri,Applied,2026-03-22 11:04:10,https://www.naukri.com/job-listings-full-stack-nestjs-developer-technource-kolkata-mumbai-new-delhi-hyderabad-pune-chennai-bengaluru-0-to-2-years-200326506100
+-Jr Node.js and TypeScript back-end Developer,,Mumbai,Naukri,Applied,2026-03-22 11:03:45,https://www.naukri.com/job-listings-jr-node-js-and-typescript-back-end-developer-dmacq-software-pvt-ltd-mumbai-0-to-3-years-160326503542
+-Fresher Full-Stack JavaScript Developer,,"Pune, Mumbai, Bengaluru, Hyderabad, Chennai, Kolkata, New Delhi",Naukri,Applied,2026-03-22 11:03:20,https://www.naukri.com/job-listings-fresher-full-stack-javascript-developer-technource-kolkata-mumbai-new-delhi-hyderabad-pune-chennai-bengaluru-0-to-1-years-200326506655
+-React Developer,,Mumbai,Naukri,Applied,2026-03-22 11:02:56,https://www.naukri.com/job-listings-react-developer-edulab-mumbai-0-to-5-years-180326500471
+diff --git a/applied_jobs.db b/applied_jobs.db
+deleted file mode 100644
+index 3f3e228..0000000
+Binary files a/applied_jobs.db and /dev/null differ
 diff --git a/platforms/indeed.py b/platforms/indeed.py
 index 37d5723..055b463 100644
 --- a/platforms/indeed.py
@@ -109,7 +133,7 @@ index 37d5723..055b463 100644
      print(f"\n✅ Indeed done — {count} applications")
      return count
 diff --git a/platforms/naukri.py b/platforms/naukri.py
-index ffc5f2d..be44857 100644
+index ffc5f2d..0a22ba3 100644
 --- a/platforms/naukri.py
 +++ b/platforms/naukri.py
 @@ -5,6 +5,8 @@ import yaml
@@ -196,7 +220,7 @@ index ffc5f2d..be44857 100644
  
          # Click Apply button
          apply_btn = await page.query_selector("button#apply-button, a#apply-button, button.apply-button")
-@@ -50,43 +111,43 @@ async def apply_to_job(page, url, title, company, location):
+@@ -50,43 +111,46 @@ async def apply_to_job(page, url, title, company, location):
              print(f"  ❌ No apply button: {title}")
              return False
  
@@ -257,7 +281,10 @@ index ffc5f2d..be44857 100644
 +                await page.query_selector("button:has-text('Apply')")
 +            )
 +            if submit:
-+                await submit.click()
++                try:
++                    await submit.click(timeout=5000)
++                except Exception:
++                    pass
 +                await page.wait_for_timeout(2500)
 +
 +        # Only a confirmation that was NOT on the page before the click counts as an application.
@@ -271,7 +298,7 @@ index ffc5f2d..be44857 100644
          await delay()
          return True
  
-@@ -101,11 +162,10 @@ async def apply_to_job(page, url, title, company, location):
+@@ -101,11 +165,11 @@ async def apply_to_job(page, url, title, company, location):
  async def run(email, password):
      count = 0
      async with async_playwright() as p:
@@ -279,6 +306,7 @@ index ffc5f2d..be44857 100644
 -        context = await browser.new_context(viewport={"width": 1280, "height": 800})
 -        page = await context.new_page()
 +        context = await p.chromium.launch_persistent_context(PROFILE_DIR('naukri'), **get_browser_options(), viewport={"width": 1280, "height": 800})
++        context.set_default_timeout(10000)
 +        page = await single_page(context)
  
 -        await login(page, email, password)
@@ -286,7 +314,7 @@ index ffc5f2d..be44857 100644
  
          for keyword in cfg["keywords"]:
              if count >= LIMITS["max_per_platform"]:
-@@ -119,9 +179,10 @@ async def run(email, password):
+@@ -119,9 +183,10 @@ async def run(email, password):
                  loc = location.lower()
                  # Naukri URL: /react-developer-jobs-in-pune  or  /react-developer-jobs
                  if loc == "remote":
@@ -299,7 +327,7 @@ index ffc5f2d..be44857 100644
  
                  print(f"\n🔍 Naukri: '{keyword}' in {location}")
                  try:
-@@ -133,30 +194,26 @@ async def run(email, password):
+@@ -133,30 +198,26 @@ async def run(email, password):
                          await page.keyboard.press("End")
                          await page.wait_for_timeout(1000)
  
@@ -345,7 +373,7 @@ index ffc5f2d..be44857 100644
                              continue
  
                      await asyncio.sleep(LIMITS["delay_between_searches"])
-@@ -165,6 +222,6 @@ async def run(email, password):
+@@ -165,6 +226,6 @@ async def run(email, password):
                      print(f"  ⚠️ Search error: {e}")
                      continue
  
@@ -353,6 +381,10 @@ index ffc5f2d..be44857 100644
 +        await context.close()
      print(f"\n✅ Naukri done — {count} applications")
      return count
+diff --git a/resume/Nawazish_Bidiwale_Fullstack.pdf b/resume/Nawazish_Bidiwale_Fullstack.pdf
+deleted file mode 100644
+index dc71870..0000000
+Binary files a/resume/Nawazish_Bidiwale_Fullstack.pdf and /dev/null differ
 diff --git a/utils/browser.py b/utils/browser.py
 index 18b663d..f18d115 100644
 --- a/utils/browser.py

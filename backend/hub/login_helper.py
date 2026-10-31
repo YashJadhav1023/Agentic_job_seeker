@@ -99,6 +99,16 @@ def main(platform: str) -> int:
         print("ERROR: no login session was saved (window closed before signing in?). Try again.", flush=True)
         return 1
     print("login session saved", flush=True)
+    try:
+        sys.path.insert(0, str(ROOT / "hub"))
+        import moli_client
+        state_file = ROOT / ".profiles" / f"{platform}_state.json"
+        if state_file.exists():
+            state_file.unlink()
+        moli_client.get_storage_state_path(platform)
+        print("moli session bridge updated", flush=True)
+    except Exception as e:
+        print(f"note: could not update moli session bridge: {e}", flush=True)
     return 0
 
 

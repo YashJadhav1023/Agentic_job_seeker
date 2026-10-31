@@ -22,5 +22,11 @@ if [ -n "${JOBHUB_VNC_PASSWORD:-}" ]; then
     echo "entrypoint: remote browser on :6080 (proxied at /browser/)"
 fi
 
+# Moli headless CDP engine (~40MB RAM vs Chromium ~400MB)
+if command -v moli >/dev/null 2>&1; then
+    moli serve --port 9222 --layout --resource >/tmp/moli.log 2>&1 &
+    echo "entrypoint: moli CDP server running on 127.0.0.1:9222"
+fi
+
 exec uvicorn api:create_app --factory --app-dir /app/hub --host 0.0.0.0 --port 8000 \
     --proxy-headers --forwarded-allow-ips='*' --workers 1

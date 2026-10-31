@@ -28,16 +28,28 @@ def log(msg):
 
 def main(params):
     skip = set(params.get("skip_urls", []))
+    if not skip:
+        try:
+            sys.path.insert(0, str(ROOT / "hub"))
+            import core
+            with core.db() as conn:
+                skip = {r[0] for r in conn.execute("SELECT url FROM jobs WHERE source='naukri'")}
+        except Exception:
+            pass
     per_query, max_total, age = params.get("per_query", 8), params.get("max_total", 30), params.get("age", 7)
     experience = int(params.get("experience", 0))
     found = 0
     inc = re.compile(params["include"], re.I) if params.get("include") else None
     exc = re.compile(params["exclude"], re.I) if params.get("exclude") else None
     ua = f"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chrome_major()}.0.0.0 Safari/537.36"
+    sys.path.insert(0, str(ROOT / "hub"))
+    import moli_client
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(
-            str(ROOT / ".profiles" / "naukri"), headless=True, channel="chromium", user_agent=ua,
-            args=["--disable-blink-features=AutomationControlled"], viewport={"width": 1280, "height": 800})
+        ctx = moli_client.sync_moli_context(p, platform="naukri", user_agent=ua)
+        if not ctx:
+            ctx = p.chromium.launch_persistent_context(
+                str(ROOT / ".profiles" / "naukri"), headless=True, channel="chromium", user_agent=ua,
+                args=["--disable-blink-features=AutomationControlled"], viewport={"width": 1280, "height": 800})
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         for kw, loc in params["queries"]:
             if found >= max_total:
@@ -111,4 +123,8 @@ def main(params):
 
 
 if __name__ == "__main__":
-    main(json.loads(sys.argv[1]))
+    if len(sys.argv) > 1 and sys.argv[1] != "-":
+        payload = json.loads(sys.argv[1])
+    else:
+        payload = json.loads(sys.stdin.read())
+    main(payload)

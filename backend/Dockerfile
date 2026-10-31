@@ -29,6 +29,20 @@ RUN pip install -r requirements.txt \
 RUN apt-get update && apt-get install -y --no-install-recommends poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
+# Moli: lightweight headless browser with CDP (~40MB RAM vs Chromium ~400MB)
+ARG MOLI_VERSION=v1.1.20
+RUN ARCH=$(uname -m) && \
+    case "$ARCH" in \
+      x86_64) MOLI_ARCH="x86_64-unknown-linux-gnu" ;; \
+      aarch64|arm64) MOLI_ARCH="aarch64-unknown-linux-gnu" ;; \
+      *) echo "Unsupported arch for moli: $ARCH" && exit 1 ;; \
+    esac && \
+    curl -fsSL "https://github.com/lexmount/moli/releases/download/${MOLI_VERSION}/moli-${MOLI_ARCH}.tar.gz" -o /tmp/moli.tar.gz && \
+    tar -xzf /tmp/moli.tar.gz -C /usr/local/bin moli && \
+    chmod +x /usr/local/bin/moli && \
+    rm -f /tmp/moli.tar.gz && \
+    moli --version || echo "moli installed"
+
 COPY . .
 RUN ./scripts/fetch_vendored.sh
 

@@ -72,10 +72,19 @@ def read_env_file(name: str) -> dict:
 
 
 # ---------------------------------------------------------------- DB
+_INITIALIZED_DBS = set()
+
 def db() -> sqlite3.Connection:
-    c = sqlite3.connect(DB_PATH)
+    c = sqlite3.connect(DB_PATH, timeout=15.0)
     c.row_factory = sqlite3.Row
-    c.executescript("""
+    c.execute("PRAGMA busy_timeout = 10000;")
+    db_key = str(DB_PATH)
+    if db_key not in _INITIALIZED_DBS:
+        try:
+            c.execute("PRAGMA journal_mode = WAL;")
+        except Exception:
+            pass
+        c.executescript("""
     CREATE TABLE IF NOT EXISTS hr_contacts(
       id INTEGER PRIMARY KEY, email TEXT UNIQUE, name TEXT, role TEXT, company TEXT, domain TEXT,
       city TEXT, confidence TEXT, note TEXT, kind TEXT, found_at TEXT, status TEXT DEFAULT 'new');
@@ -113,7 +122,8 @@ def db() -> sqlite3.Connection:
     CREATE TABLE IF NOT EXISTS form_attempts(
       id INTEGER PRIMARY KEY, job_id INTEGER, at TEXT, status TEXT, reason TEXT, screenshot TEXT, dry INTEGER DEFAULT 1);
     """)
-    _migrate(c)
+        _migrate(c)
+        _INITIALIZED_DBS.add(db_key)
     return c
 
 
@@ -398,6 +408,8 @@ def spawn(kind: str, argv: list, cwd: Path, env_extra: dict, dry_run: bool, args
 
 
 def _alive(pid: int) -> bool:
+    if not pid or pid <= 0:
+        return False
     try:
         os.kill(pid, 0)
         stat = Path(f"/proc/{pid}/stat")

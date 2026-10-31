@@ -22,10 +22,13 @@ def main(resume: str, dry: bool) -> int:
         print(f"resume not found: {resume}", flush=True)
         return 3
     ua = f"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chrome_major()}.0.0.0 Safari/537.36"
+    import moli_client
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(
-            str(ROOT / ".profiles" / "naukri"), headless=True, channel="chromium", user_agent=ua,
-            args=["--disable-blink-features=AutomationControlled"], viewport={"width": 1280, "height": 900})
+        ctx = moli_client.sync_moli_context(p, platform="naukri", user_agent=ua, viewport={"width": 1280, "height": 900})
+        if not ctx:
+            ctx = p.chromium.launch_persistent_context(
+                str(ROOT / ".profiles" / "naukri"), headless=True, channel="chromium", user_agent=ua,
+                args=["--disable-blink-features=AutomationControlled"], viewport={"width": 1280, "height": 900})
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         try:
             page.goto(PROFILE_URL, wait_until="domcontentloaded", timeout=60000)

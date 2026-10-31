@@ -997,6 +997,13 @@ def apply_one(ctx, job: dict, F: dict, dry: bool, ask=None, shot_dir: Path = SHO
 
 # ---------------------------------------------------------------- batch runner (CLI used by the autopilot)
 def launch(p, headless: bool = True):
+    if headless:
+        try:
+            import moli_client
+            if moli_client.is_moli_available():
+                return p.chromium.connect_over_cdp(moli_client.MOLI_URL)
+        except Exception:
+            pass
     exe = os.environ.get("JOBHUB_CHROME") or None
     kw = {"executable_path": exe} if exe else {"channel": "chromium"}
     return p.chromium.launch(headless=headless, args=["--disable-blink-features=AutomationControlled"], **kw)

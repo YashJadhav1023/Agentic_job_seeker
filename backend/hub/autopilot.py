@@ -197,13 +197,13 @@ def discover_naukri(profile: dict, c: dict, budget: int) -> int:
     s = profile["search"]
     queries = [[kw, loc or "india"] for kw, loc in search_pairs(profile, c, "naukri_pairs")]
     nums = re.findall(r"\d+", str(profile["applicant"].get("experience_years", "0")))
-    params = {"queries": queries, "per_query": c["per_query"], "max_total": budget, "skip_urls": sorted(known_urls()),
+    params = {"queries": queries, "per_query": c["per_query"], "max_total": budget,
               "include": s["title_include"], "exclude": s["title_exclude"], "age": int(c["job_age_days"]),
               "experience": int(nums[0]) if nums else 0}
     try:
-        r = subprocess.run([core.PY, str(core.ROOT / "hub" / "naukri_discover.py"), json.dumps(params)], capture_output=True,
-                           text=True, timeout=1500, env={"PATH": "/usr/bin:/bin", "HOME": str(Path.home()),
-                                                         "PLAYWRIGHT_BROWSERS_PATH": str(core.ROOT / ".browsers")})
+        r = subprocess.run([core.PY, str(core.ROOT / "hub" / "naukri_discover.py"), "-"], input=json.dumps(params),
+                           capture_output=True, text=True, timeout=1500, env={"PATH": "/usr/bin:/bin", "HOME": str(Path.home()),
+                                                                         "PLAYWRIGHT_BROWSERS_PATH": str(core.ROOT / ".browsers")})
     except subprocess.TimeoutExpired:
         log("naukri discovery timed out")
         return 0

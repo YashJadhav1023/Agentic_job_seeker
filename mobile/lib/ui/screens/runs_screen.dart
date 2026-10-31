@@ -14,7 +14,7 @@ import 'tool_run_screen.dart';
 /// Human label for a run record's state, shared by the list and Home activity card.
 bool runIsRunning(Map<String, dynamic> r) => r['running'] == true;
 
-/// Waiting in the run queue (at most 3 runs execute at once).
+/// Waiting in the run queue (at most 6 runs execute at once).
 bool runIsQueued(Map<String, dynamic> r) => r['queued'] == true;
 
 bool runIsFailed(Map<String, dynamic> r) {

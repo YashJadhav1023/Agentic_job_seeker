@@ -13,7 +13,7 @@ const _days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const _dayLabel = {'mon': 'Mon', 'tue': 'Tue', 'wed': 'Wed', 'thu': 'Thu', 'fri': 'Fri', 'sat': 'Sat', 'sun': 'Sun'};
 
 /// Alarm-style schedule: at a clock time the server runs a list of tasks by itself (find HR emails, send emails, bulk
-/// email, LinkedIn apply, Naukri apply ...). Tasks that start together wait in the run queue, three at a time.
+/// email, LinkedIn apply, Naukri apply ...). Tasks that start together wait in the run queue, six at a time.
 class ScheduleScreen extends ConsumerWidget {
   const ScheduleScreen({super.key});
 

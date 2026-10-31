@@ -12,7 +12,7 @@ services:
     env_file: .env
     environment:
       JOBHUB_TRUST_PROXY: "1"
-      JOBHUB_MAX_PARALLEL: "${JOBHUB_MAX_PARALLEL:-3}"   # 3 parallel runs with Moli (~40MB RAM/run)
+      JOBHUB_MAX_PARALLEL: "${JOBHUB_MAX_PARALLEL:-6}"   # 6 parallel runs with Moli (~40MB RAM/run)
       JOBHUB_REMOTE_BROWSER_URL: "https://${JOBHUB_DOMAIN}/browser/vnc.html?path=browser/websockify&autoconnect=1&resize=scale"
     volumes:
       - jobhub-data:/app/data          # profile.yaml, hub.db, resume.pdf, STOP switch

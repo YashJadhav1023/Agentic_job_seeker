@@ -28,52 +28,52 @@ def _fake_running(monkeypatch, running: set):
     monkeypatch.setattr(core, "run_status", fake)
 
 
-def test_default_limit_is_three():
-    assert core.MAX_PARALLEL == 3
+def test_default_limit_is_six():
+    assert core.MAX_PARALLEL == 6
 
 
-def test_fourth_and_fifth_run_wait_in_fifo_order(monkeypatch):
+def test_seventh_and_eighth_run_wait_in_fifo_order(monkeypatch):
     running = set()
     _fake_running(monkeypatch, running)
     ids = []
-    for kind in ("career", "hr-pune", "verify"):
+    for kind in ("career", "hr-pune", "verify", "hr-chennai", "hr-kolkata", "hr-hyderabad"):
         r = _spawn(kind)
         assert "queued" not in r
         running.add(r["run_id"])
         ids.append(r["run_id"])
-    fourth, fifth = _spawn("hr-mumbai"), _spawn("hr-delhi")
-    assert fourth["queued"] and fourth["position"] == 1
-    assert fifth["queued"] and fifth["position"] == 2
-    assert core.run_status(fourth["run_id"])["state"] == "queued"
+    seventh, eighth = _spawn("hr-mumbai"), _spawn("hr-delhi")
+    assert seventh["queued"] and seventh["position"] == 1
+    assert eighth["queued"] and eighth["position"] == 2
+    assert core.run_status(seventh["run_id"])["state"] == "queued"
 
     # nothing free yet: nothing starts
     assert core.dispatch_queue() == []
     # one run finishes -> exactly the oldest queued run starts
     running.discard(ids[0])
-    assert core.dispatch_queue() == [fourth["run_id"]]
-    running.add(fourth["run_id"])
-    assert core.queue_position(fifth["run_id"]) == 1
+    assert core.dispatch_queue() == [seventh["run_id"]]
+    running.add(seventh["run_id"])
+    assert core.queue_position(eighth["run_id"]) == 1
     # two finish -> the last one starts
     running.discard(ids[1])
-    assert core.dispatch_queue() == [fifth["run_id"]]
+    assert core.dispatch_queue() == [eighth["run_id"]]
 
 
 def test_queue_state_lists_running_and_waiting(monkeypatch):
     running = set()
     _fake_running(monkeypatch, running)
-    for kind in ("career", "hr-pune", "verify"):
+    for kind in ("career", "hr-pune", "verify", "hr-chennai", "hr-kolkata", "hr-hyderabad"):
         running.add(_spawn(kind)["run_id"])
     waiting = _spawn("hr-mumbai")
     st = core.queue_state()
-    assert st["max_parallel"] == 3
-    assert len(st["running"]) == 3
+    assert st["max_parallel"] == 6
+    assert len(st["running"]) == 6
     assert [q["run_id"] for q in st["queued"]] == [waiting["run_id"]]
 
 
 def test_cancel_removes_a_queued_run(monkeypatch):
     running = set()
     _fake_running(monkeypatch, running)
-    for kind in ("career", "hr-pune", "verify"):
+    for kind in ("career", "hr-pune", "verify", "hr-chennai", "hr-kolkata", "hr-hyderabad"):
         running.add(_spawn(kind)["run_id"])
     waiting = _spawn("hr-mumbai")
     assert core.cancel_run(waiting["run_id"])["cancelled"] is True

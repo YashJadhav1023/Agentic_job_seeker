@@ -262,7 +262,7 @@ def running_conflict(kind: str, exclude: str = "") -> str:
 
 
 # At most this many runs execute at once; further runs wait in a FIFO queue and start by themselves.
-MAX_PARALLEL = int(os.environ.get("JOBHUB_MAX_PARALLEL", "3"))
+MAX_PARALLEL = int(os.environ.get("JOBHUB_MAX_PARALLEL", "6"))
 _SPAWN_LOCK = threading.RLock()
 
 
@@ -387,7 +387,7 @@ def queue_state() -> dict:
 
 def spawn(kind: str, argv: list, cwd: Path, env_extra: dict, dry_run: bool, args: dict) -> dict:
     """Start a background run through hub/launcher.py, which records the child's exit code in <log>.exit.
-    At most MAX_PARALLEL (default 3) runs execute at once and runs that share a browser profile never overlap; any
+    At most MAX_PARALLEL (default 6) runs execute at once and runs that share a browser profile never overlap; any
     run that cannot start yet is put in a FIFO queue (state "queued") and starts by itself as soon as it can."""
     rid = f"{kind}-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4]}"
     with _SPAWN_LOCK:

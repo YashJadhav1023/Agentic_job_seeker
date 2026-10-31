@@ -38,10 +38,10 @@ RUN ARCH=$(uname -m) && \
       *) echo "Unsupported arch for moli: $ARCH" && exit 1 ;; \
     esac && \
     curl -fsSL "https://github.com/lexmount/moli/releases/download/${MOLI_VERSION}/moli-${MOLI_ARCH}.tar.gz" -o /tmp/moli.tar.gz && \
-    tar -xzf /tmp/moli.tar.gz -C /usr/local/bin moli && \
+    tar -xzf /tmp/moli.tar.gz --strip-components=1 -C /usr/local/bin --wildcards "*/moli" && \
     chmod +x /usr/local/bin/moli && \
     rm -f /tmp/moli.tar.gz && \
-    moli --version || echo "moli installed"
+    /usr/local/bin/moli --version
 
 COPY . .
 RUN ./scripts/fetch_vendored.sh

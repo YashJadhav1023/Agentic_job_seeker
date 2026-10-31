@@ -1003,7 +1003,7 @@ def launch(p, headless: bool = True):
             if moli_client.is_moli_available():
                 return p.chromium.connect_over_cdp(moli_client.MOLI_URL)
         except Exception:
-            pass
+            pass  # Fall back to local Chromium launch
     exe = os.environ.get("JOBHUB_CHROME") or None
     kw = {"executable_path": exe} if exe else {"channel": "chromium"}
     return p.chromium.launch(headless=headless, args=["--disable-blink-features=AutomationControlled"], **kw)

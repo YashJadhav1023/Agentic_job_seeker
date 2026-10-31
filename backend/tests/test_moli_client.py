@@ -1,6 +1,5 @@
 import json
 import pytest
-from pathlib import Path
 import moli_client as mc
 
 def test_is_moli_available_disabled(monkeypatch):

@@ -82,8 +82,8 @@ def db() -> sqlite3.Connection:
     if db_key not in _INITIALIZED_DBS:
         try:
             c.execute("PRAGMA journal_mode = WAL;")
-        except Exception:
-            pass
+        except (sqlite3.DatabaseError, sqlite3.OperationalError):
+            pass  # Non-fatal if WAL mode is unsupported (e.g. read-only or in-memory db)
         c.executescript("""
     CREATE TABLE IF NOT EXISTS hr_contacts(
       id INTEGER PRIMARY KEY, email TEXT UNIQUE, name TEXT, role TEXT, company TEXT, domain TEXT,

@@ -111,6 +111,6 @@ def run_mailscout(
         "total_valid": len(valid_emails),
         "generated_prefixes_count": len(generated_prefixes),
         "generated_variants_count": len(generated_variants),
-        "sample_variants": generated_variants[:6],
-        "sample_prefixes": generated_prefixes[:6],
+        "sample_variants": generated_variants[:12],
+        "sample_prefixes": generated_prefixes[:12],
     }

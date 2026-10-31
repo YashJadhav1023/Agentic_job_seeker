@@ -1,5 +1,7 @@
 """Run a command, stream its output, and record its exit code in <exitfile> (used by core.spawn)."""
-import os, subprocess, sys
+import os
+import subprocess
+import sys
 
 exitfile, argv = sys.argv[1], sys.argv[2:]
 code = 1

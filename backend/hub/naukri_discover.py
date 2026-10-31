@@ -34,8 +34,8 @@ def main(params):
             import core
             with core.db() as conn:
                 skip = {r[0] for r in conn.execute("SELECT url FROM jobs WHERE source='naukri'")}
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"naukri_discover: note: could not query existing jobs from db: {e}")
     per_query, max_total, age = params.get("per_query", 8), params.get("max_total", 30), params.get("age", 7)
     experience = int(params.get("experience", 0))
     found = 0

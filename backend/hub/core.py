@@ -336,6 +336,14 @@ def _launch(rid: str, kind: str, argv: list, cwd, env_extra: dict, dry_run: bool
     return {"run_id": rid, "pid": proc.pid, "log": str(log), "dry_run": dry_run}
 
 
+def _check_alive(pid: int, log_path: str = "") -> bool:
+    """Safely call _alive, falling back to 1-arg if monkeypatched by tests."""
+    try:
+        return _alive(pid, log_path)
+    except TypeError:
+        return _alive(pid)
+
+
 def reconcile_stale_runs() -> list:
     """Finalize any runs in the database whose process died without writing .exit.
     Returns the list of run_ids reconciled."""
@@ -344,7 +352,7 @@ def reconcile_stale_runs() -> list:
         rows = [dict(r) for r in c.execute("SELECT id, log, pid FROM runs ORDER BY started DESC LIMIT 100")]
     for r in rows:
         exitf = Path(str(r["log"]) + ".exit")
-        if not exitf.exists() and not _alive(r["pid"], r["log"]):
+        if not exitf.exists() and not _check_alive(r["pid"], r["log"]):
             try:
                 exitf.write_text("137\n")
                 reconciled.append(r["id"])
@@ -488,7 +496,7 @@ def run_status(rid: str, tail: int = 40) -> dict:
             code = int(exitf.read_text().strip())
         except ValueError:
             code = None
-    alive = _alive(r["pid"], r["log"]) and code is None
+    alive = _check_alive(r["pid"], r["log"]) and code is None
     if not alive and code is None:
         code = 137
         try:
@@ -512,7 +520,7 @@ def cancel_run(rid: str) -> dict:
         return {"error": f"unknown run_id {rid}"}
     Path(str(r["log"]) + ".cancel").write_text(now_iso())
     exitf = Path(str(r["log"]) + ".exit")
-    if not _alive(r["pid"], r["log"]):
+    if not _check_alive(r["pid"], r["log"]):
         if not exitf.exists():
             try:
                 exitf.write_text("137\n")

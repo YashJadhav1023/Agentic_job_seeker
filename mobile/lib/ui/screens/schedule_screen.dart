@@ -75,15 +75,15 @@ class ScheduleScreen extends ConsumerWidget {
                 // 6-Slot High Concurrency Engine Banner
                 Container(
                   margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.all(14),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       colors: [
                         AppTheme.card,
                         AppTheme.cardElevated,
                       ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
+                      begin: AlignmentDirectional.topStart,
+                      end: AlignmentDirectional.bottomEnd,
                     ),
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
@@ -106,14 +106,14 @@ class ScheduleScreen extends ConsumerWidget {
                             Row(
                               children: [
                                 Text('Parallel Engine',
-                                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5, color: AppTheme.textPrimary)),
-                                SizedBox(width: 6),
+                                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppTheme.textPrimary)),
+                                SizedBox(width: 8),
                                 StatusChip('6 Slots Max', isMini: true),
                               ],
                             ),
-                            SizedBox(height: 3),
+                            SizedBox(height: 4),
                             Text('Alarms dispatch tasks simultaneously in parallel without blocking each other.',
-                                style: TextStyle(fontSize: 11.5, color: AppTheme.textSecondary)),
+                                style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
                           ],
                         ),
                       ),
@@ -185,18 +185,18 @@ class _AlarmCard extends ConsumerWidget {
 
   Widget _buildTaskBadge(String task, String label) {
     final (icon, color) = switch (task) {
-      'send_emails' => (Icons.mark_email_read_rounded, const Color(0xFF6366F1)),
-      'find_emails' => (Icons.person_search_rounded, const Color(0xFF06B6D4)),
-      'bulk_email' => (Icons.forward_to_inbox_rounded, const Color(0xFF8B5CF6)),
-      'linkedin_apply' => (Icons.business_center_rounded, const Color(0xFF0284C7)),
-      'naukri_apply' => (Icons.work_history_rounded, const Color(0xFFF59E0B)),
-      'scan_posts' => (Icons.feed_rounded, const Color(0xFF14B8A6)),
-      'global_search' => (Icons.travel_explore_rounded, const Color(0xFF10B981)),
-      'whatsapp_send' => (Icons.chat_bubble_rounded, const Color(0xFF22C55E)),
+      'send_emails' => (Icons.mark_email_read_rounded, AppTheme.accentIndigo),
+      'find_emails' => (Icons.person_search_rounded, AppTheme.accentCyan),
+      'bulk_email' => (Icons.forward_to_inbox_rounded, AppTheme.accentPurple),
+      'linkedin_apply' => (Icons.business_center_rounded, AppTheme.accentSky),
+      'naukri_apply' => (Icons.work_history_rounded, AppTheme.warning),
+      'scan_posts' => (Icons.feed_rounded, AppTheme.accentTeal),
+      'global_search' => (Icons.travel_explore_rounded, AppTheme.success),
+      'whatsapp_send' => (Icons.chat_bubble_rounded, AppTheme.accentGreen),
       _ => (Icons.task_alt_rounded, AppTheme.primaryLight),
     };
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(8),
@@ -205,9 +205,9 @@ class _AlarmCard extends ConsumerWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 13, color: color),
-          const SizedBox(width: 5),
-          Text(label, style: TextStyle(color: color, fontSize: 11.5, fontWeight: FontWeight.w600)),
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 4),
+          Text(label, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600)),
         ],
       ),
     );

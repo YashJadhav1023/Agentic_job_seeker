@@ -50,15 +50,15 @@ class _QueueBannerState extends ConsumerState<QueueBanner> {
         borderRadius: BorderRadius.circular(16),
         onTap: widget.onTap ?? () => context.go('/runs'),
         child: Container(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: [
                 AppTheme.card,
                 AppTheme.primaryContainer.withValues(alpha: 0.35),
               ],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+              begin: AlignmentDirectional.topStart,
+              end: AlignmentDirectional.bottomEnd,
             ),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: AppTheme.primary.withValues(alpha: 0.4), width: 1.2),
@@ -76,14 +76,14 @@ class _QueueBannerState extends ConsumerState<QueueBanner> {
               Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(7),
+                    padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
                       color: AppTheme.primary.withValues(alpha: 0.2),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: const Icon(Icons.bolt_rounded, size: 16, color: AppTheme.secondaryLight),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -92,11 +92,11 @@ class _QueueBannerState extends ConsumerState<QueueBanner> {
                           children: [
                             Text(
                               '${running.length} Active · ${waiting.length} Waiting',
-                              style: const TextStyle(fontWeight: FontWeight.w700, color: AppTheme.textPrimary, fontSize: 13.5),
+                              style: const TextStyle(fontWeight: FontWeight.w700, color: AppTheme.textPrimary, fontSize: 14),
                             ),
                             const Spacer(),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                               decoration: BoxDecoration(
                                 color: AppTheme.primary.withValues(alpha: 0.25),
                                 borderRadius: BorderRadius.circular(6),
@@ -106,39 +106,39 @@ class _QueueBannerState extends ConsumerState<QueueBanner> {
                                 'Engine: $maxSlots Slots',
                                 style: const TextStyle(
                                   color: AppTheme.primaryLight,
-                                  fontSize: 10.5,
+                                  fontSize: 12,
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 3),
+                        const SizedBox(height: 4),
                         Text(
                           [
                             if (running.isNotEmpty) 'Active: ${running.map(kind).join(', ')}',
                             if (waiting.isNotEmpty) 'Next: ${waiting.take(3).map(kind).join(', ')}${waiting.length > 3 ? ' …' : ''}',
                           ].join('   ·   '),
-                          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11.5),
+                          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 8),
                   const Icon(Icons.chevron_right_rounded, color: AppTheme.textMuted, size: 20),
                 ],
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
               // Slot Utilization Meter (6 parallel slots)
               Row(
                 children: [
                   for (int i = 0; i < maxSlots; i++)
                     Expanded(
                       child: Container(
-                        height: 5,
-                        margin: EdgeInsets.only(right: i < maxSlots - 1 ? 4 : 0),
+                        height: 6,
+                        margin: EdgeInsetsDirectional.only(end: i < maxSlots - 1 ? 4 : 0),
                         decoration: BoxDecoration(
                           color: i < running.length
                               ? AppTheme.secondaryLight

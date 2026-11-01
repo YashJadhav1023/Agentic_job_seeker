@@ -8,6 +8,7 @@ class AppTheme {
   static const Color primary = Color(0xFF6366F1); // Modern Indigo
   static const Color primaryLight = Color(0xFF818CF8);
   static const Color primaryContainer = Color(0xFF1E1B4B);
+  static const Color heroGradientStart = Color(0xFF312E81);
 
   static const Color secondary = Color(0xFF06B6D4); // Cyan
   static const Color secondaryLight = Color(0xFF38BDF8);
@@ -22,7 +23,29 @@ class AppTheme {
   static const Color warningContainer = Color(0xFF78350F);
 
   static const Color error = Color(0xFFEF4444); // Crimson/Rose
+  static const Color errorLight = Color(0xFFFCA5A5);
   static const Color errorContainer = Color(0xFF7F1D1D);
+
+  // Semantic feature accent tokens (Material 3 Expressive)
+  static const Color accentIndigo = Color(0xFF6366F1);
+  static const Color accentCyan = Color(0xFF06B6D4);
+  static const Color accentSky = Color(0xFF38BDF8);
+  static const Color accentAmber = Color(0xFFFBBF24);
+  static const Color accentEmerald = Color(0xFF34D399);
+  static const Color accentPurple = Color(0xFFA78BFA);
+  static const Color accentPink = Color(0xFFF472B6);
+  static const Color accentGreen = Color(0xFF22C55E);
+  static const Color accentOrange = Color(0xFFFB923C);
+  static const Color accentTeal = Color(0xFF2DD4BF);
+
+  // 8pt grid spacing tokens
+  static const double space4 = 4.0;
+  static const double space8 = 8.0;
+  static const double space12 = 12.0;
+  static const double space16 = 16.0;
+  static const double space20 = 20.0;
+  static const double space24 = 24.0;
+  static const double space32 = 32.0;
 
   // Backgrounds & surfaces (Deep modern slate)
   static const Color background = Color(0xFF0B0F19);

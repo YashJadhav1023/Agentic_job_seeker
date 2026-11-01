@@ -24,18 +24,18 @@ class HomeScreen extends ConsumerWidget {
         title: Row(
           children: [
             Container(
-              padding: const EdgeInsets.all(7),
+              padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
                   colors: [AppTheme.primary, AppTheme.secondary],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
+                  begin: AlignmentDirectional.topStart,
+                  end: AlignmentDirectional.bottomEnd,
                 ),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: const Icon(Icons.auto_awesome, size: 16, color: Colors.white),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
             const Text('Job Seeker AI'),
           ],
         ),
@@ -60,18 +60,18 @@ class HomeScreen extends ConsumerWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             children: [
               _HeroCard(s),
-              const SizedBox(height: 14),
+              const SizedBox(height: 16),
               _SetupChecklist(s),
               const AttentionBanner(),
               const QueueBanner(),
               _TodayCounters(s),
-              const SizedBox(height: 14),
+              const SizedBox(height: 16),
               _AutopilotControl(s),
-              const SizedBox(height: 14),
+              const SizedBox(height: 16),
               _PlatformAccounts(s),
-              const SizedBox(height: 14),
+              const SizedBox(height: 16),
               const _QuickActionsSection(),
-              const SizedBox(height: 14),
+              const SizedBox(height: 16),
               const _RecentActivitySection(),
               const SizedBox(height: 24),
             ],
@@ -96,12 +96,12 @@ class _HeroCard extends StatelessWidget {
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
-            const Color(0xFF312E81), // Deep Indigo
-            const Color(0xFF1E1B4B),
+            AppTheme.heroGradientStart,
+            AppTheme.primaryContainer,
             AppTheme.card,
           ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          begin: AlignmentDirectional.topStart,
+          end: AlignmentDirectional.bottomEnd,
         ),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3), width: 1.2),
@@ -150,7 +150,7 @@ class _HeroCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                     decoration: BoxDecoration(
                       color: live ? AppTheme.success.withValues(alpha: 0.2) : AppTheme.warning.withValues(alpha: 0.2),
                       borderRadius: BorderRadius.circular(20),
@@ -163,19 +163,19 @@ class _HeroCard extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Container(
-                          width: 6,
-                          height: 6,
+                          width: 8,
+                          height: 8,
                           decoration: BoxDecoration(
                             color: live ? AppTheme.success : AppTheme.warning,
                             shape: BoxShape.circle,
                           ),
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 8),
                         Text(
                           live ? 'LIVE ACTIVE' : 'DRY-RUN SAFE',
                           style: TextStyle(
                             color: live ? AppTheme.successLight : AppTheme.warningLight,
-                            fontSize: 10.5,
+                            fontSize: 12,
                             fontWeight: FontWeight.w700,
                             letterSpacing: 0.5,
                           ),
@@ -183,9 +183,9 @@ class _HeroCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
                       color: AppTheme.primary.withValues(alpha: 0.25),
                       borderRadius: BorderRadius.circular(16),
@@ -194,13 +194,13 @@ class _HeroCard extends StatelessWidget {
                     child: const Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.bolt_rounded, size: 12, color: AppTheme.secondaryLight),
-                        SizedBox(width: 3),
+                        Icon(Icons.bolt_rounded, size: 14, color: AppTheme.secondaryLight),
+                        SizedBox(width: 4),
                         Text(
                           '6 SLOTS MAX',
                           style: TextStyle(
                             color: AppTheme.primaryLight,
-                            fontSize: 10,
+                            fontSize: 12,
                             fontWeight: FontWeight.w800,
                             letterSpacing: 0.4,
                           ),
@@ -213,7 +213,7 @@ class _HeroCard extends StatelessWidget {
             ],
           ),
           if (locations.isNotEmpty) ...[
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
             Row(
               children: [
                 const Icon(Icons.location_on_outlined, size: 14, color: AppTheme.secondaryLight),
@@ -586,16 +586,16 @@ class _QuickActionsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final actions = <(IconData, String, Color, String, Map<String, dynamic>)>[
-      (Icons.bolt_rounded, 'Career ATS Auto-Apply', const Color(0xFF06B6D4), 'career_apply', {'limit': 5}),
+      (Icons.bolt_rounded, 'Career ATS Auto-Apply', AppTheme.accentCyan, 'career_apply', {'limit': 5}),
       (Icons.travel_explore_rounded, 'Search All Boards & Apply', AppTheme.primaryLight, '_search', {}),
-      (Icons.search_rounded, 'LinkedIn Search & Apply', const Color(0xFF38BDF8), 'search_jobs', {'save': true}),
-      (Icons.dynamic_feed_rounded, 'Scan Hiring Posts & Apply', const Color(0xFFFBBF24), 'scan_hiring_posts', {'max_posts': 80, 'auto_apply': true}),
-      (Icons.assignment_turned_in_rounded, 'Easy Apply Bot', const Color(0xFF34D399), 'apply_jobs', {}),
-      (Icons.contact_mail_rounded, 'Find HR Emails', const Color(0xFFA78BFA), 'find_hr_emails', {}),
-      (Icons.forward_to_inbox_rounded, 'Bulk Email HR', const Color(0xFFF472B6), 'send_hr_emails', {}),
-      (Icons.chat_rounded, 'WhatsApp', const Color(0xFF25D366), '_whatsapp', {}),
-      (Icons.alarm_rounded, 'Schedule (alarms)', const Color(0xFFFB923C), '_schedule', {}),
-      (Icons.insights_rounded, 'Progress Report', const Color(0xFF2DD4BF), '_report', {}),
+      (Icons.search_rounded, 'LinkedIn Search & Apply', AppTheme.accentSky, 'search_jobs', {'save': true}),
+      (Icons.dynamic_feed_rounded, 'Scan Hiring Posts & Apply', AppTheme.accentAmber, 'scan_hiring_posts', {'max_posts': 80, 'auto_apply': true}),
+      (Icons.assignment_turned_in_rounded, 'Easy Apply Bot', AppTheme.accentEmerald, 'apply_jobs', {}),
+      (Icons.contact_mail_rounded, 'Find HR Emails', AppTheme.accentPurple, 'find_hr_emails', {}),
+      (Icons.forward_to_inbox_rounded, 'Bulk Email HR', AppTheme.accentPink, 'send_hr_emails', {}),
+      (Icons.chat_rounded, 'WhatsApp', AppTheme.accentGreen, '_whatsapp', {}),
+      (Icons.alarm_rounded, 'Schedule (alarms)', AppTheme.accentOrange, '_schedule', {}),
+      (Icons.insights_rounded, 'Progress Report', AppTheme.accentTeal, '_report', {}),
       (Icons.monitor_heart_rounded, 'System Status', AppTheme.successLight, '_status', {}),
       (Icons.grid_view_rounded, 'All Tools', AppTheme.primaryLight, '_all_tools', {}),
     ];
@@ -791,7 +791,7 @@ class _ActivityTile extends StatelessWidget {
       subtitle: Text(
         summary,
         style: TextStyle(
-          color: failed ? const Color(0xFFFCA5A5) : AppTheme.textSecondary,
+          color: failed ? AppTheme.errorLight : AppTheme.textSecondary,
           fontSize: 12,
         ),
         maxLines: 1,

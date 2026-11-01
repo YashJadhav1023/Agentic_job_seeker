@@ -141,6 +141,33 @@ def test_llm_not_ready_without_key(monkeypatch):
     assert not ok and "KIRO_API_KEY" in why
 
 
+def test_groq_openai_provider(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_test123456789012345")
+    monkeypatch.setattr(llm, "_http_json", lambda url, payload, headers, timeout: {
+        "choices": [{"message": {"content": "{\"role\": \"DevOps Engineer\", \"match\": true}"}}]
+    })
+    res = llm.chat_json("test prompt", {"provider": "openai", "model": "llama-3.3-70b-versatile", "timeout_sec": 5})
+    assert res == {"role": "DevOps Engineer", "match": True}
+
+
+def test_ollama_fallback_to_groq(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_test123456789012345")
+    # Ollama fails
+    calls = []
+    def fake_http(url, payload, headers, timeout):
+        calls.append(url)
+        if "11434" in url:
+            raise llm.LLMError("ollama down")
+        return {"choices": [{"message": {"content": "{\"fallback\": true}"}}]}
+    monkeypatch.setattr(llm, "_http_json", fake_http)
+    res = llm.chat_json("test prompt", {
+        "provider": "ollama", "model": "qwen2.5:0.5b", "fallback_provider": "openai",
+        "fallback_model": "llama-3.3-70b-versatile", "timeout_sec": 5, "base_url": "https://api.groq.com/openai/v1"
+    })
+    assert res == {"fallback": True}
+    assert any("api.groq.com" in c for c in calls)
+
+
 def test_post_scanner_process_dedups_and_stores(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "ROOT", tmp_path)
     monkeypatch.setattr(post_scanner.contacts, "verify_email", lambda e, *a, **k: "valid")

@@ -22,12 +22,12 @@ PLACEHOLDERS = {"", "unset", "none", "null", "nil", "changeme", "change-me", "to
 KNOWN = {
     "firecrawl": (("JOBHUB_FIRECRAWL_API_KEY", "FIRECRAWL_API_KEY"), "firecrawl_api_key"),
     "kiro": (("KIRO_API_KEY",), "kiro_api_key"),
-    "llm": (("LLM_API_KEY",), "llm_api_key"),
+    "llm": (("JOBHUB_LLM_API_KEY", "GROQ_API_KEY", "LLM_API_KEY"), "llm_api_key"),
     "telegram": (("TELEGRAM_BOT_TOKEN",), "telegram_bot_token"),
 }
 
 # Shapes of keys that could show up in provider error output.
-_KEY_SHAPES = re.compile(r"(ksk_[A-Za-z0-9]{8,}|fc-[A-Za-z0-9]{8,}|sk-[A-Za-z0-9_\-]{12,}|\b\d{6,}:[A-Za-z0-9_\-]{20,}|"
+_KEY_SHAPES = re.compile(r"(gsk_[A-Za-z0-9]{8,}|ksk_[A-Za-z0-9]{8,}|fc-[A-Za-z0-9]{8,}|sk-[A-Za-z0-9_\-]{12,}|\b\d{6,}:[A-Za-z0-9_\-]{20,}|"
                          r"Bearer\s+[A-Za-z0-9._\-]{12,})")
 _AUTH_RX = re.compile(r"\b(401|403)\b|unauthori[sz]ed|forbidden|invalid[ _-]*(api[ _-]*)?(key|token)|expired[ _-]*(api[ _-]*)?(key|token)|"
                       r"authentication (failed|required)|not logged in", re.I)

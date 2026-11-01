@@ -380,8 +380,6 @@ def hub_status(_):
             "groq_api_key": keys.present("groq") or bool(core.read_secret("groq_api_key")),
             "telegram_bot_token": keys.present("telegram"),
             "firecrawl_api_key": keys.present("firecrawl"),
-            "hunter_api_key": keys.present("hunter"),
-            "zerobounce_api_key": keys.present("zerobounce"),
         },
         "key_cooldowns": {k: v["cooldown"] for k, v in keys.report().items() if v["cooldown"]},
         "resume": resume.info(p),

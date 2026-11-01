@@ -610,46 +610,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ),
           const SizedBox(height: 18),
-          const SectionHeader(title: 'Email Deliverability & Verification', icon: Icons.verified_user_rounded),
-          Container(
-            decoration: BoxDecoration(
-              color: AppTheme.card,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppTheme.borderSubtle),
-            ),
-            child: Column(
-              children: [
-                ListTile(
-                  enabled: connected,
-                  leading: const Icon(Icons.email_outlined, color: AppTheme.accent),
-                  title: const Text('Primary: Hunter.io API', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                  subtitle: Text(
-                    creds['hunter_api_key'] == true
-                        ? 'Key saved · Direct verification over HTTPS (free tier: 50 checks/mo)'
-                        : 'Free API key from hunter.io for primary recruiter email verification',
-                    style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-                  ),
-                  onTap: () => _setSecret('hunter_api_key', 'Hunter.io API Key',
-                      'Paste your free Hunter.io API key. Used as the primary verifier without requiring Port 25.'),
-                ),
-                Divider(height: 1, color: AppTheme.borderSubtle.withOpacity(0.5)),
-                ListTile(
-                  enabled: connected,
-                  leading: const Icon(Icons.verified_outlined, color: AppTheme.successLight),
-                  title: const Text('Secondary: ZeroBounce API', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                  subtitle: Text(
-                    creds['zerobounce_api_key'] == true
-                        ? 'Key saved · Automatic fallback when Hunter quota is reached'
-                        : 'Free API key from zerobounce.net for secondary verification fallback',
-                    style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-                  ),
-                  onTap: () => _setSecret('zerobounce_api_key', 'ZeroBounce API Key',
-                      'Paste your free ZeroBounce API key. Automatically activates if Hunter.io runs out of credits.'),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 18),
           // Safety & Guardrails Card
           Container(
             decoration: BoxDecoration(

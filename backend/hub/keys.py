@@ -23,6 +23,7 @@ KNOWN = {
     "firecrawl": (("JOBHUB_FIRECRAWL_API_KEY", "FIRECRAWL_API_KEY"), "firecrawl_api_key"),
     "kiro": (("KIRO_API_KEY",), "kiro_api_key"),
     "llm": (("JOBHUB_LLM_API_KEY", "GROQ_API_KEY", "LLM_API_KEY"), "llm_api_key"),
+    "groq": (("GROQ_API_KEY",), "groq_api_key"),
     "telegram": (("TELEGRAM_BOT_TOKEN",), "telegram_bot_token"),
 }
 

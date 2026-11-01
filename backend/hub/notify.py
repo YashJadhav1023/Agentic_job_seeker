@@ -65,12 +65,14 @@ def push(profile: dict, title: str, text: str, url: str = "") -> bool:
 
 
 def post_alert(profile: dict, v: dict, author: str, excerpt: str, emails: list, links: list) -> bool:
-    lines = ["New matching hiring post",
+    # Only alert via Telegram if user explicitly enabled post notifications (disabled by default to avoid apply link spam)
+    n = profile.get("notifications") or {}
+    if not n.get("alert_posts", False):
+        return False
+    lines = ["Matching Hiring Post",
              f"Role: {v.get('role') or '?'}", f"Company: {v.get('company') or '?'}", f"Location: {v.get('location') or '?'}",
              f"Posted by: {author or '?'}"]
     if emails:
-        lines.append("Email: " + ", ".join(emails[:3]))
-    if links:
-        lines.append("Link: " + links[0])
-    lines += ["", excerpt[:600]]
+        lines.append("Recruiter Contact: " + ", ".join(emails[:2]))
+    lines += ["", excerpt[:300]]
     return telegram(profile, "\n".join(lines))

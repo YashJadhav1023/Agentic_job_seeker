@@ -261,7 +261,21 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/profile", dependencies=auth)
     def get_profile():
-        return {"path": str(core.PROFILE_PATH), "yaml": core.PROFILE_PATH.read_text(), "profile": core.load_profile()}
+        raw_yaml = core.PROFILE_PATH.read_text()
+        prof = core.load_profile()
+        redacted_yaml = keys.redact(raw_yaml)
+
+        def _sanitize(d):
+            if isinstance(d, dict):
+                return {
+                    k: ("***" if any(s in k.lower() for s in ("key", "secret", "password", "token")) and not isinstance(v, (dict, list, bool)) else _sanitize(v))
+                    for k, v in d.items()
+                }
+            elif isinstance(d, list):
+                return [_sanitize(x) for x in d]
+            return d
+
+        return {"path": str(core.PROFILE_PATH), "yaml": redacted_yaml, "profile": _sanitize(prof)}
 
     @app.put("/api/v1/profile", dependencies=auth)
     async def put_profile(req: Request):
@@ -373,6 +387,33 @@ def create_app() -> FastAPI:
         return {"secrets": {n: (keys.present(SECRET_TO_KEY[n]) if n in SECRET_TO_KEY else bool(core.read_secret(n)))
                             for n in sorted(ALLOWED_SECRETS)},
                 "cooldowns": {k: v["cooldown"] for k, v in keys.report().items() if v["cooldown"]}}
+
+    @app.get("/api/v1/emails/replies", dependencies=auth)
+    def get_email_replies(status: str | None = None, limit: int = 50):
+        import email_scanner
+        return {"replies": email_scanner.list_replies(status=status, limit=limit)}
+
+    @app.post("/api/v1/emails/scan", dependencies=auth)
+    async def trigger_email_scan():
+        import email_scanner
+        res = await run_in_threadpool(email_scanner.scan_inbox, core.load_profile())
+        return res
+
+    @app.put("/api/v1/emails/replies/{id}/draft", dependencies=auth)
+    def update_email_draft(id: int, draft: str = Body(..., embed=True)):
+        import email_scanner
+        ok = email_scanner.update_draft(id, draft)
+        if not ok:
+            raise HTTPException(404, f"reply {id} not found")
+        return {"updated": id}
+
+    @app.post("/api/v1/emails/replies/{id}/send", dependencies=auth)
+    async def send_email_reply(id: int):
+        import email_scanner
+        res = await run_in_threadpool(email_scanner.send_approved_reply, id, core.load_profile())
+        if not res.get("ok"):
+            raise HTTPException(400, res.get("error", "Failed to send reply"))
+        return res
 
     # ------------------------------------------------------------ MCP over HTTP (JSON response mode)
     @app.post("/mcp", dependencies=auth)

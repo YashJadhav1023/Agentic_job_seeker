@@ -514,46 +514,97 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   enabled: connected,
                   leading: Icon(Icons.psychology_rounded,
                       color: llm['ready'] == true ? AppTheme.successLight : AppTheme.textMuted),
-                  title: Text('AI provider: ${llm['provider'] ?? 'none'}',
+                  title: Text('AI provider: ${(llm['provider'] ?? 'none').toString().toUpperCase()}',
                       style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                   subtitle: Text(
                     llm['ready'] == true
-                        ? 'Ready · hiring posts and your resume are analysed by AI'
-                        : '${llm['reason'] ?? 'Not set'} · set llm.provider in the profile',
+                        ? 'Ready · hiring posts, career forms, and resumes are analysed by AI'
+                        : '${llm['reason'] ?? 'Not set'} · configured in profile.yaml',
                     style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
                   ),
                 ),
                 const Divider(height: 1),
-                ListTile(
-                  enabled: connected,
-                  leading: const Icon(Icons.vpn_key_rounded, color: AppTheme.primaryLight),
-                  title: const Text('Kiro API key', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                  subtitle: Text(creds['kiro_api_key'] == true ? 'Saved on server' : 'For llm.provider: kiro (Kiro Pro and above)',
-                      style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
-                  onTap: () => _setSecret('kiro_api_key', 'Kiro API key',
-                      'Generate an API key in your Kiro account settings. Used only to analyse posts and your resume.'),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  enabled: connected,
-                  leading: const Icon(Icons.key_rounded, color: AppTheme.primaryLight),
-                  title: const Text('Other AI API key', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                  subtitle: Text(creds['llm_api_key'] == true ? 'Saved on server' : 'For llm.provider: openai (DeepSeek, OpenRouter ...)',
-                      style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
-                  onTap: () => _setSecret('llm_api_key', 'AI API key', 'Key for the OpenAI-compatible API set in llm.base_url.'),
-                ),
+                if ((llm['provider'] ?? '').toString().toLowerCase() == 'ollama') ...[
+                  ListTile(
+                    enabled: connected,
+                    leading: const Icon(Icons.memory_rounded, color: AppTheme.successLight),
+                    title: const Text('Self-Hosted Ollama', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                    subtitle: Text(
+                      'Model: ${llm['model'] ?? 'qwen2.5:0.5b'} · Local execution on server · Zero token cost',
+                      style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  ListTile(
+                    enabled: connected,
+                    leading: const Icon(Icons.bolt_rounded, color: AppTheme.primaryLight),
+                    title: const Text('Cloud Fallback (Groq API key)', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                    subtitle: Text(
+                      creds['groq_api_key'] == true || creds['llm_api_key'] == true
+                          ? 'Key saved on server (encrypted)'
+                          : 'Optional cloud fallback key (gsk_...)',
+                      style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                    ),
+                    onTap: () => _setSecret('groq_api_key', 'Groq API Key', 'Key for fast cloud inference fallback.'),
+                  ),
+                ] else if ((llm['provider'] ?? '').toString().toLowerCase() == 'kiro') ...[
+                  ListTile(
+                    enabled: connected,
+                    leading: const Icon(Icons.vpn_key_rounded, color: AppTheme.primaryLight),
+                    title: const Text('Kiro API key', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                    subtitle: Text(creds['kiro_api_key'] == true ? 'Saved on server (encrypted)' : 'For llm.provider: kiro (Kiro Pro and above)',
+                        style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                    onTap: () => _setSecret('kiro_api_key', 'Kiro API key',
+                        'Generate an API key in your Kiro account settings. Used only to analyse posts and forms.'),
+                  ),
+                ] else ...[
+                  ListTile(
+                    enabled: connected,
+                    leading: const Icon(Icons.bolt_rounded, color: AppTheme.primaryLight),
+                    title: const Text('Groq / OpenAI API key', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                    subtitle: Text(
+                      creds['groq_api_key'] == true || creds['llm_api_key'] == true
+                          ? 'Saved on server (encrypted)'
+                          : 'API key for cloud inference (Groq / OpenRouter / OpenAI)',
+                      style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                    ),
+                    onTap: () => _setSecret('groq_api_key', 'AI API key', 'Key for the fast cloud API set in llm.'),
+                  ),
+                ],
                 const Divider(height: 1),
                 ListTile(
                   enabled: connected,
                   leading: const Icon(Icons.notifications_active_rounded, color: AppTheme.primaryLight),
-                  title: const Text('Telegram alerts', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                  title: const Text('Telegram Alerts & Human Verification', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
                   subtitle: Text(
                       creds['telegram_bot_token'] == true
-                          ? 'Bot token saved · set notifications.telegram_chat_id in the profile'
-                          : 'Optional: message per matching hiring post',
+                          ? 'Bot active · Instant alerts for CAPTCHAs, recruiter replies & missing fields'
+                          : 'Set up bot token to get human-in-the-loop CAPTCHA notifications',
                       style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
                   onTap: () => _setSecret('telegram_bot_token', 'Telegram bot token',
                       'Create a bot with @BotFather and paste its token. Put your chat id in notifications.telegram_chat_id.'),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          const SectionHeader(title: 'Recruiter Email Intelligence', icon: Icons.mark_email_read_rounded),
+          Container(
+            decoration: BoxDecoration(
+              color: AppTheme.card,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppTheme.borderSubtle),
+            ),
+            child: Column(
+              children: [
+                ListTile(
+                  enabled: connected,
+                  leading: const Icon(Icons.auto_fix_high_rounded, color: AppTheme.successLight),
+                  title: const Text('Recruiter Inbox Scanner & AI Replies', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                  subtitle: const Text(
+                    'Scans replies from HR, extracts questions (CTC, notice period), and prepares smart drafts using your profile facts.',
+                    style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                  ),
                 ),
               ],
             ),

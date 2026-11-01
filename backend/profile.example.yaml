@@ -8,15 +8,20 @@ applicant:
   email: you@example.com
   phone: "+91XXXXXXXXXX"
   current_location: Pune
-  location: {city: Pune, state: Maharashtra, country: India}   # used to fill application forms
+  location: {city: Pune, state: Maharashtra, country: India, postal_code: "411001"}   # used to fill application forms
   linkedin: https://linkedin.com/in/your-handle
   github: https://github.com/your-handle
+  portfolio: https://your-portfolio.com
   resume_path: /app/data/resume.pdf     # uploaded from the app (Settings -> Resume); always the latest upload
   headline: DevOps & Cloud Engineer
   experience_years: "1"
   willing_to_relocate: "Yes"
+  work_authorization: "Yes"             # legally authorized to work in India / target country
+  requires_sponsorship: "No"            # whether visa sponsorship is needed
   gender: ""                            # optional; filled into "Gender" questions. Empty = "prefer not to say" when offered
-  education: {highest_level: "Bachelor's", degree: "B.Tech Computer Science", university: "Your College", graduation_year: "2025", gpa: ""}
+  disability: "Prefer not to say"       # standard ATS demographic question
+  veteran: "No"                         # standard ATS veteran question
+  education: {highest_level: "Bachelor's", degree: "B.Tech Computer Science", branch: "Computer Science", university: "Your College", graduation_year: "2025", gpa: "8.0"}
   cover_note: ""                        # optional short note for application forms; empty = built from this profile
 
 experience:
@@ -29,6 +34,8 @@ compensation:
   min_ctc_inr: 450000
   current_ctc_inr: 0
   notice_period_days: 30
+  serving_notice: "No"
+  last_working_day: ""
 
 search:
   auto_from_resume: true          # on resume upload, also replace keywords/title rules (needs an LLM, see llm:)

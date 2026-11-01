@@ -377,6 +377,7 @@ def hub_status(_):
             "gmail_user": p["hr_outreach"].get("gmail_user", ""),
             "kiro_api_key": keys.present("kiro"),
             "llm_api_key": keys.present("llm"),
+            "groq_api_key": keys.present("groq") or bool(core.read_secret("groq_api_key")),
             "telegram_bot_token": keys.present("telegram"),
             "firecrawl_api_key": keys.present("firecrawl"),
         },

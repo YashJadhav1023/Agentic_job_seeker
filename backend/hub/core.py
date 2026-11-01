@@ -235,9 +235,9 @@ def applied_today() -> int:
 def _profile_groups(kind: str) -> set:
     """Browser profiles (or exclusive kinds) a run uses. Runs whose sets intersect must not overlap."""
     if kind.startswith("autopilot"):
-        return {"autopilot", "career-apply", "linkedin", "naukri", "indeed"}
-    if kind.startswith("career-apply"):
-        return {"career-apply", "autopilot"}
+        return {"autopilot", "naukri", "linkedin"}
+    if kind.startswith("career-apply") or kind.startswith("career"):
+        return {"career-apply"}
     out = {site for site in ("linkedin", "naukri", "indeed") if site in kind}
     if kind.startswith(("posts", "prepare-linkedin")):
         out.add("linkedin")

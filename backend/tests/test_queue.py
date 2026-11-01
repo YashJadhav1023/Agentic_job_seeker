@@ -133,3 +133,13 @@ def test_locks_of_a_running_browser_are_kept(tmp_path, monkeypatch):
     finally:
         p.kill()
         p.wait()
+
+
+def test_career_apply_runs_concurrently_with_autopilot(monkeypatch):
+    running = set()
+    _fake_running(monkeypatch, running)
+    ap = _spawn("autopilot")
+    running.add(ap["run_id"])
+    ca = _spawn("career-apply")
+    assert "queued" not in ca
+

@@ -38,11 +38,24 @@ def record_unanswered(question: str, options: list, company: str = "") -> None:
     k = key(question)
     if len(k) < 3:
         return
+    inserted = False
     with _db() as c:
         if c.execute("UPDATE form_qa SET seen=seen+1 WHERE qkey=?", (k,)).rowcount:
             return
         c.execute("INSERT INTO form_qa(qkey,question,options,company,asked_at) VALUES(?,?,?,?,?)",
                   (k, str(question)[:300], json.dumps([str(o)[:120] for o in (options or [])][:30]), str(company)[:120], core.now_iso()))
+        inserted = True
+    if inserted:
+        try:
+            import notify
+            opts_str = f" (Options: {', '.join(options[:4])})" if options else ""
+            comp_str = f" for {company}" if company else ""
+            notify.telegram(core.load_profile(),
+                            f"❓ Missing Candidate Field{comp_str}:\n"
+                            f"\"{question}\"{opts_str}\n\n"
+                            f"Save your answer in the app (All Tools > form_questions) to auto-fill this on future applications.")
+        except Exception:
+            pass
 
 
 def pending() -> list:

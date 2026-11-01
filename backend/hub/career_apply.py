@@ -150,8 +150,8 @@ BUTTONS_JS = r"""
 }
 """
 
-APPLY_RX = re.compile(r"^(apply( now| here| today| manually| for this (job|position|role)| to this (job|position|role))?|i'?m interested|"
-                      r"start (your )?application|apply on (the )?(company|employer)(?:'s)? (site|website))\W*$", re.I)
+APPLY_RX = re.compile(r"^(apply( now| here| today| manually| for this (job|position|role)| to this (job|position|role)| online| with resume)?|i'?m interested|"
+                      r"start (your )?application|submit (your )?application|quick apply|apply on (the )?(company|employer)(?:'s)? (site|website))\W*$", re.I)
 NEXT_RX = re.compile(r"^(next|continue|save (and|&) continue|proceed|review( application)?|next step)\b", re.I)
 SUBMIT_RX = re.compile(r"^(submit( (my |your )?application)?|send( (my |your )?application)?|apply( now)?|finish|"
                        r"complete( application)?|confirm( and submit)?)\W*$", re.I)
@@ -178,9 +178,12 @@ def is_form_host(url: str) -> bool:
 STOPWORDS = {"and", "the", "for", "with", "of", "in", "at", "a", "an", "to", "ii", "i", "iii", "-", "|", "/", "&"}
 
 
-def title_matches(title: str, page_text: str, need: float = 0.6) -> bool:
-    """Most words of the job title appear on the page (guards against applying through a wrong or generic page)."""
-    words = [w for w in re.findall(r"[a-z0-9+#.]+", norm(title)) if w not in STOPWORDS and len(w) > 1]
+def title_matches(title: str, page_text: str, need: float = 0.5) -> bool:
+    """Most core words of the job title appear on the page (guards against applying through a wrong or generic page)."""
+    clean_title = re.sub(r"\b(walk[\s-]*in|urgent|hiring|immediate\s+opening|apply\s+now)\b", "", title, flags=re.I)
+    clean_title = re.sub(r"(@|at)\s+[\w\s.-]+$", "", clean_title, flags=re.I)
+    clean_title = re.sub(r"\([^)]*\)", "", clean_title)
+    words = [w for w in re.findall(r"[a-z0-9+#.]+", norm(clean_title or title)) if w not in STOPWORDS and len(w) > 1]
     if not words:
         return True
     t = norm(page_text)
@@ -274,15 +277,20 @@ def facts(profile: dict, resume_text: str = "") -> dict:
     f = {
         "name": name, "first": parts[0] if parts else "", "last": " ".join(parts[1:]) if len(parts) > 1 else "",
         "email": a.get("email", ""), "phone": str(a.get("phone", "")), "linkedin": a.get("linkedin", ""),
-        "github": a.get("github", ""), "city": loc.get("city") or a.get("current_location", ""),
-        "state": loc.get("state", ""), "country": loc.get("country", ""),
+        "github": a.get("github", ""), "portfolio": a.get("portfolio") or a.get("website", ""),
+        "city": loc.get("city") or a.get("current_location", ""),
+        "state": loc.get("state", ""), "country": loc.get("country", ""), "postal_code": loc.get("postal_code", ""),
         "headline": a.get("headline", ""), "years": a.get("experience_years", ""),
         "relocate": str(a.get("willing_to_relocate", "")), "company": exp.get("current_company", ""),
         "title": exp.get("current_title", ""), "expected_ctc": comp.get("expected_ctc_inr"),
         "current_ctc": comp.get("current_ctc_inr"), "notice_days": comp.get("notice_period_days"),
+        "serving_notice": comp.get("serving_notice", "No"),
+        "work_auth": a.get("work_authorization", "Yes"),
+        "sponsorship": a.get("requires_sponsorship", "No"),
         "degree_level": edu.get("highest_level", ""), "degree": edu.get("degree", ""), "university": edu.get("university", ""),
         "grad_year": edu.get("graduation_year", ""), "gpa": edu.get("gpa", ""),
         "branch": edu.get("branch") or branch_of(edu.get("degree", "")), "gender": str(a.get("gender") or "").strip(),
+        "disability": str(a.get("disability") or "").strip(), "veteran": str(a.get("veteran") or "").strip(),
         "resume_path": a.get("resume_path", ""), "cover_note": (a.get("cover_note") or "").strip(),
         "skills": ", ".join((profile.get("search") or {}).get("skills") or []), "resume_text": resume_text,
     }
@@ -557,7 +565,7 @@ def _decide(d: dict, F: dict, job: dict, ask=None) -> tuple:
             if i is not None:
                 return ("select" if kind == "select" else "choose", i, "branch")
     elif it == "website":
-        value = F.get("github") or F.get("linkedin") or None
+        value = F.get("portfolio") or F.get("github") or F.get("linkedin") or None
     elif it == "phone":
         p = F.get("phone", "")
         if p and d.get("maxlength") and len(p) > d["maxlength"]:
@@ -1192,8 +1200,8 @@ def record(job: dict, r: dict, dry: bool) -> None:
 def alert(profile: dict, job: dict, r: dict) -> None:
     try:
         import notify
-        icon = {"applied": "Applied", "unconfirmed": "Submitted but not confirmed"}.get(r["status"], r["status"])
-        notify.telegram(profile, f"Career form: {icon}\n{job.get('title')} @ {job.get('company')}\n{job['url']}")
+        status_label = {"applied": "✅ Verified & Applied", "unconfirmed": "⚠️ Submitted (Awaiting Confirmation)"}.get(r["status"], r["status"])
+        notify.telegram(profile, f"Career Form Submission:\nStatus: {status_label}\nRole: {job.get('title')}\nCompany: {job.get('company')}")
     except Exception:  # noqa: BLE001
         pass
 

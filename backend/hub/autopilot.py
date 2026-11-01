@@ -290,7 +290,10 @@ def score_new(profile: dict, c: dict) -> dict:
 
 
 def high_match_alert(profile: dict, j: dict, sc: float, matched: list) -> bool:
-    """One push per job (Telegram / ntfy) for a very strong match, so you can look at it while it is fresh."""
+    """One push per job (Telegram / ntfy) for a very strong match, if user enabled job match alerts."""
+    n = (profile.get("notifications") or {})
+    if n.get("alert_job_matches") is False:
+        return False
     k = f"alerted:{j['id']}"
     if core.kv_get(k):
         return False
@@ -298,8 +301,8 @@ def high_match_alert(profile: dict, j: dict, sc: float, matched: list) -> bool:
     try:
         import notify
         return bool(notify.push(profile, f"Strong match {int(sc)}%: {j.get('title')} @ {j.get('company')}",
-                                f"{j.get('location') or ''} | matches {', '.join(matched[:6])}. The bot applies within your caps; "
-                                "tap to open the job.", j.get("apply_url") or j.get("url") or ""))
+                                f"{j.get('location') or ''} | Skills: {', '.join(matched[:4])}. Auto-apply will process this role.",
+                                j.get("apply_url") or j.get("url") or ""))
     except Exception:  # noqa: BLE001
         return False
 
@@ -402,6 +405,12 @@ def process_inbox(profile: dict) -> dict:
                 contacts.suppress(contacts.domain_of(addr), "unsubscribe reply")
                 res["unsubscribes"] += 1
         m.logout()
+        try:
+            import email_scanner
+            scan_res = email_scanner.scan_inbox(profile, max_messages=30)
+            res["recruiter_replies"] = scan_res.get("replies_found", 0)
+        except Exception:
+            pass
     except Exception as e:  # noqa: BLE001 - IMAP disabled etc.; never block the run
         res["error"] = f"{type(e).__name__}: {str(e)[:100]}"
     return res

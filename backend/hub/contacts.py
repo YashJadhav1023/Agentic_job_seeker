@@ -166,6 +166,81 @@ def _reacher_url():
     return os.environ.get("REACHER_URL") or core.read_env_file("reacher.env").get("REACHER_URL")
 
 
+def hunter_check(email: str) -> str | None:
+    """Verify email via Hunter.io API (Primary API).
+    Returns valid | catch_all | invalid | unknown | None (if failed, quota exhausted, or unconfigured).
+    """
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    import keys
+    if keys.failed("hunter"):
+        return None
+    k = keys.get("hunter")
+    if not k:
+        return None
+    try:
+        url = f"https://api.hunter.io/v2/email-verifier?email={urllib.parse.quote(email)}&api_key={k}"
+        req = urllib.request.Request(url, headers={"User-Agent": "JobSeekerAI/1.0"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode())
+            status = data.get("data", {}).get("status")
+            if status == "valid":
+                return "valid"
+            if status == "invalid":
+                return "invalid"
+            if status in ("accept_all", "webmail"):
+                return "catch_all"
+            return "unknown"
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            keys.mark_failed("hunter", "invalid", hours=24.0)
+        elif e.code in (402, 429):
+            keys.mark_failed("hunter", "credits", hours=12.0)
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def zerobounce_check(email: str) -> str | None:
+    """Verify email via ZeroBounce API (Secondary Fallback API).
+    Returns valid | catch_all | invalid | unknown | None (if failed, quota exhausted, or unconfigured).
+    """
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    import keys
+    if keys.failed("zerobounce"):
+        return None
+    k = keys.get("zerobounce")
+    if not k:
+        return None
+    try:
+        url = f"https://api.zerobounce.net/v2/validate?api_key={k}&email={urllib.parse.quote(email)}"
+        req = urllib.request.Request(url, headers={"User-Agent": "JobSeekerAI/1.0"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode())
+            status = str(data.get("status", "")).lower()
+            if status == "valid":
+                return "valid"
+            if status in ("invalid", "spamtrap", "abuse", "do_not_mail"):
+                return "invalid"
+            if status == "catch-all":
+                return "catch_all"
+            if data.get("sub_status") == "quota_exceeded":
+                keys.mark_failed("zerobounce", "credits", hours=12.0)
+                return None
+            return "unknown"
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            keys.mark_failed("zerobounce", "invalid", hours=24.0)
+        elif e.code in (402, 429):
+            keys.mark_failed("zerobounce", "credits", hours=12.0)
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def reacher_check(email: str):
     url = _reacher_url()
     if not url:
@@ -187,7 +262,13 @@ def reacher_check(email: str):
 
 
 def verify_email(email: str, mail_from: str = "", use_cache: bool = True) -> str:
-    """Return valid | catch_all | invalid | unknown | no_mx | bad_syntax. Cached 14 days."""
+    """Return valid | catch_all | invalid | unknown | no_mx | bad_syntax. Cached 14 days.
+    Resolution priority:
+      1. Hunter.io API (Primary)
+      2. ZeroBounce API (Secondary fallback if Hunter exhausted or rate-limited)
+      3. Reacher (if custom REACHER_URL is configured)
+      4. Built-in SMTP / Microsoft 365 HTTPS / Gravatar / MX deliverability check
+    """
     email = email.strip().lower()
     if not EMAIL_RE.fullmatch(email):
         return "bad_syntax"
@@ -196,7 +277,10 @@ def verify_email(email: str, mail_from: str = "", use_cache: bool = True) -> str
         row = c.execute("SELECT result, checked_at FROM email_checks WHERE email=?", (email,)).fetchone()
     if use_cache and row and row["checked_at"] >= cutoff and row["result"] != "unknown":
         return row["result"]
-    res = reacher_check(email) or smtp_probe(email, mail_from or "verify@localhost")
+    res = (hunter_check(email) or
+           zerobounce_check(email) or
+           reacher_check(email) or
+           smtp_probe(email, mail_from or "verify@localhost"))
     with core.db() as c:
         c.execute("INSERT OR REPLACE INTO email_checks(email,result,checked_at) VALUES(?,?,?)", (email, res, datetime.now().isoformat()))
     return res

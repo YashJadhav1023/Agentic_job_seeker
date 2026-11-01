@@ -25,6 +25,8 @@ KNOWN = {
     "llm": (("JOBHUB_LLM_API_KEY", "GROQ_API_KEY", "LLM_API_KEY"), "llm_api_key"),
     "groq": (("GROQ_API_KEY",), "groq_api_key"),
     "telegram": (("TELEGRAM_BOT_TOKEN",), "telegram_bot_token"),
+    "hunter": (("JOBHUB_HUNTER_API_KEY", "HUNTER_API_KEY"), "hunter_api_key"),
+    "zerobounce": (("JOBHUB_ZEROBOUNCE_API_KEY", "ZEROBOUNCE_API_KEY"), "zerobounce_api_key"),
 }
 
 # Shapes of keys that could show up in provider error output.

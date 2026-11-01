@@ -24,9 +24,8 @@ GoRouter buildRouter({String initialLocation = '/'}) => GoRouter(
           branches: [
             StatefulShellBranch(routes: [GoRoute(path: '/', builder: (_, _) => const HomeScreen())]),
             StatefulShellBranch(routes: [GoRoute(path: '/jobs', builder: (_, _) => const JobsScreen())]),
-            StatefulShellBranch(routes: [GoRoute(path: '/contacts', builder: (_, _) => const ContactsScreen())]),
             StatefulShellBranch(routes: [GoRoute(path: '/runs', builder: (_, _) => const RunsScreen())]),
-            StatefulShellBranch(routes: [GoRoute(path: '/tools', builder: (_, _) => const ToolsScreen())]),
+            StatefulShellBranch(routes: [GoRoute(path: '/schedule', builder: (_, _) => const ScheduleScreen())]),
             StatefulShellBranch(
               routes: [
                 GoRoute(
@@ -39,6 +38,8 @@ GoRouter buildRouter({String initialLocation = '/'}) => GoRouter(
           ],
         ),
         // Purpose-built screens for tools that used to open as a raw form + JSON dump.
+        GoRoute(path: '/contacts', builder: (_, _) => const ContactsScreen()),
+        GoRoute(path: '/tools', builder: (_, _) => const ToolsScreen()),
         GoRoute(path: '/search', builder: (_, _) => const GlobalSearchScreen()),
         GoRoute(path: '/tools/global_search', builder: (_, _) => const GlobalSearchScreen()),
         GoRoute(path: '/tools/multi_board_search', builder: (_, _) => const GlobalSearchScreen()),
@@ -73,9 +74,9 @@ class _Shell extends StatelessWidget {
 
   static const _dest = [
     NavigationDestination(
-      icon: Icon(Icons.dashboard_outlined),
-      selectedIcon: Icon(Icons.dashboard_rounded),
-      label: 'Home',
+      icon: Icon(Icons.space_dashboard_outlined),
+      selectedIcon: Icon(Icons.space_dashboard_rounded),
+      label: 'Dashboard',
     ),
     NavigationDestination(
       icon: Icon(Icons.work_outline_rounded),
@@ -83,22 +84,17 @@ class _Shell extends StatelessWidget {
       label: 'Jobs',
     ),
     NavigationDestination(
-      icon: Icon(Icons.people_outline_rounded),
-      selectedIcon: Icon(Icons.people_rounded),
-      label: 'Contacts',
-    ),
-    NavigationDestination(
       icon: Icon(Icons.terminal_outlined),
       selectedIcon: Icon(Icons.terminal_rounded),
-      label: 'Runs',
+      label: 'Activity',
     ),
     NavigationDestination(
-      icon: Icon(Icons.grid_view_outlined),
-      selectedIcon: Icon(Icons.grid_view_rounded),
-      label: 'Tools',
+      icon: Icon(Icons.alarm_outlined),
+      selectedIcon: Icon(Icons.alarm_rounded),
+      label: 'Schedule',
     ),
     NavigationDestination(
-      icon: Icon(Icons.tune_rounded),
+      icon: Icon(Icons.tune_outlined),
       selectedIcon: Icon(Icons.tune_rounded),
       label: 'Settings',
     ),

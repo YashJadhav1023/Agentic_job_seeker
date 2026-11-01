@@ -882,6 +882,7 @@ def apply_one(ctx, job: dict, F: dict, dry: bool, ask=None, shot_dir: Path = SHO
     res = {"job_id": job.get("id"), "url": job.get("url"), "status": "error", "reason": "", "filled": 0, "steps": 0, "screenshot": ""}
     page = None
     asked = set()
+    opened_pages = set()
 
     def hand_over(kind: str, reason: str) -> bool:
         if human is None or kind in asked:
@@ -893,10 +894,13 @@ def apply_one(ctx, job: dict, F: dict, dry: bool, ask=None, shot_dir: Path = SHO
             return False
     try:
         page = ctx.new_page()
+        opened_pages.add(page)
         page.goto(job["url"], wait_until="domcontentloaded", timeout=45000)
         settle(page)
         _dismiss_cookies(page)
         page, scope, descs = _reach_form(ctx, page, job, res)
+        if page not in opened_pages:
+            opened_pages.add(page)
         if scope is None and res["status"] in ("login", "captcha"):
             kind = "login" if res["status"] == "login" else "human_check"
             if hand_over(kind, res["reason"]):
@@ -904,6 +908,8 @@ def apply_one(ctx, job: dict, F: dict, dry: bool, ask=None, shot_dir: Path = SHO
                 _dismiss_cookies(page)
                 res.update(status="error", reason="")
                 page, scope, descs = _reach_form(ctx, page, job, res, check_title=False)
+                if page not in opened_pages:
+                    opened_pages.add(page)
         if scope is None:
             return res
 
@@ -996,11 +1002,11 @@ def apply_one(ctx, job: dict, F: dict, dry: bool, ask=None, shot_dir: Path = SHO
         res.update(status="error", reason=f"{type(e).__name__}: {str(e)[:150]}")
         return res
     finally:
-        try:
-            for p in list(ctx.pages):
+        for p in list(opened_pages):
+            try:
                 p.close()
-        except Exception:  # noqa: BLE001
-            pass
+            except Exception:  # noqa: BLE001
+                pass
 
 
 # ---------------------------------------------------------------- batch runner (CLI used by the autopilot)
@@ -1054,22 +1060,31 @@ def run_batch(profile: dict, jobs: list, dry: bool, emit=print, pause=(6, 14)) -
     results = []
     headed = make_human(profile, {}) is not None and not dry
     with sync_playwright() as p:
-        if headed:
-            # Visible on the server display (the remote browser) with a saved profile: a login you finish once
-            # (Workday tenant, Deloitte, ...) is remembered for the next jobs on that site.
+        def _get_shared():
             exe = os.environ.get("JOBHUB_CHROME") or None
             kw = {"executable_path": exe} if exe else {"channel": "chromium"}
             (ROOT / ".profiles" / "career").mkdir(parents=True, exist_ok=True)
-            browser = None
-            shared = p.chromium.launch_persistent_context(str(ROOT / ".profiles" / "career"), headless=False,
-                                                          args=["--disable-blink-features=AutomationControlled"],
-                                                          viewport={"width": 1280, "height": 860}, locale="en-IN", **kw)
+            sc = p.chromium.launch_persistent_context(str(ROOT / ".profiles" / "career"), headless=False,
+                                                      args=["--disable-blink-features=AutomationControlled"],
+                                                      viewport={"width": 1280, "height": 860}, locale="en-IN", **kw)
+            if not sc.pages:
+                sc.new_page()
+            return sc
+
+        if headed:
+            browser, shared = None, _get_shared()
         else:
             browser, shared = launch(p), None
         try:
             for j in jobs:
                 if (ROOT / "data" / "STOP").exists():
                     break
+                if headed:
+                    try:
+                        if not shared or not shared.pages:
+                            shared = _get_shared()
+                    except Exception:  # noqa: BLE001
+                        shared = _get_shared()
                 ctx = shared or browser.new_context(viewport={"width": 1280, "height": 900}, accept_downloads=False, locale="en-IN")
                 ctx.set_default_timeout(15000)
                 ctx.set_default_navigation_timeout(45000)
@@ -1078,13 +1093,16 @@ def run_batch(profile: dict, jobs: list, dry: bool, emit=print, pause=(6, 14)) -
                     r = apply_one(ctx, j, Fj, dry, make_asker(Fj, j), human=make_human(profile, j) if headed else None)
                 finally:
                     if shared is None:
-                        ctx.close()
+                        try:
+                            ctx.close()
+                        except Exception:  # noqa: BLE001
+                            pass
                     else:
-                        for pg in list(shared.pages)[1:]:
-                            try:
-                                pg.close()
-                            except Exception:  # noqa: BLE001
-                                pass
+                        try:
+                            while len(shared.pages) > 1:
+                                shared.pages[-1].close()
+                        except Exception:  # noqa: BLE001
+                            pass
                 results.append(r)
                 emit("RESULT " + json.dumps(r))
                 time.sleep(random.uniform(*pause))

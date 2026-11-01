@@ -294,8 +294,9 @@ def start() -> bool:
         return False
     try:
         core.clear_stale_browser_locks()  # locks left by a previous container / killed browser
+        core.reconcile_stale_runs()  # finalize any runs whose processes died across restarts
     except Exception as e:  # noqa: BLE001
-        print(f"stale lock cleanup failed: {e}", flush=True)
+        print(f"startup stale cleanup failed: {e}", flush=True)
     threading.Thread(target=_queue_loop, name="jobhub-queue", daemon=True).start()
     _thread = threading.Thread(target=_loop, name="jobhub-scheduler", daemon=True)
     _thread.start()

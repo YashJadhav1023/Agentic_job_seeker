@@ -72,14 +72,69 @@ class ScheduleScreen extends ConsumerWidget {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
               children: [
                 const QueueBanner(),
+                // 6-Slot High Concurrency Engine Banner
+                Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        AppTheme.card,
+                        AppTheme.cardElevated,
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primary.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.bolt_rounded, color: AppTheme.secondaryLight, size: 22),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Text('Parallel Engine',
+                                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5, color: AppTheme.textPrimary)),
+                                SizedBox(width: 6),
+                                StatusChip('6 Slots Max', isMini: true),
+                              ],
+                            ),
+                            SizedBox(height: 3),
+                            Text('Alarms dispatch tasks simultaneously in parallel without blocking each other.',
+                                style: TextStyle(fontSize: 11.5, color: AppTheme.textSecondary)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 Text('Server time ${'${d['server_time']}'.replaceFirst('T', ' ')}',
                     style: const TextStyle(color: AppTheme.textMuted, fontSize: 12)),
                 const SizedBox(height: 8),
                 Card(
                   child: ListTile(
-                    leading: const Icon(Icons.play_circle_fill_rounded, color: AppTheme.primaryLight),
-                    title: const Text('Run all daily tasks now'),
-                    subtitle: const Text('Find HR emails · send emails · bulk email · LinkedIn apply · Naukri apply'),
+                    leading: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primary.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.play_circle_fill_rounded, color: AppTheme.primaryLight, size: 22),
+                    ),
+                    title: const Text('Run all daily tasks now', style: TextStyle(fontWeight: FontWeight.w700)),
+                    subtitle: const Text('Spawns up to 6 concurrent tasks: HR search, email sending, LinkedIn, Naukri'),
                     trailing: PopupMenuButton<bool>(
                       icon: const Icon(Icons.more_vert),
                       onSelected: (preview) =>
@@ -91,7 +146,7 @@ class ScheduleScreen extends ConsumerWidget {
                     ),
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
                 if (list.isEmpty)
                   const Padding(
                     padding: EdgeInsets.all(24),
@@ -128,6 +183,36 @@ class _AlarmCard extends ConsumerWidget {
   final VoidCallback onEdit;
   final Future<void> Function(BuildContext, WidgetRef, Map<String, dynamic>, String) onRun;
 
+  Widget _buildTaskBadge(String task, String label) {
+    final (icon, color) = switch (task) {
+      'send_emails' => (Icons.mark_email_read_rounded, const Color(0xFF6366F1)),
+      'find_emails' => (Icons.person_search_rounded, const Color(0xFF06B6D4)),
+      'bulk_email' => (Icons.forward_to_inbox_rounded, const Color(0xFF8B5CF6)),
+      'linkedin_apply' => (Icons.business_center_rounded, const Color(0xFF0284C7)),
+      'naukri_apply' => (Icons.work_history_rounded, const Color(0xFFF59E0B)),
+      'scan_posts' => (Icons.feed_rounded, const Color(0xFF14B8A6)),
+      'global_search' => (Icons.travel_explore_rounded, const Color(0xFF10B981)),
+      'whatsapp_send' => (Icons.chat_bubble_rounded, const Color(0xFF22C55E)),
+      _ => (Icons.task_alt_rounded, AppTheme.primaryLight),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: color),
+          const SizedBox(width: 5),
+          Text(label, style: TextStyle(color: color, fontSize: 11.5, fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final enabled = al['enabled'] == true;
@@ -136,21 +221,52 @@ class _AlarmCard extends ConsumerWidget {
     final lastRuns = ((last?['runs'] as List?) ?? const []).cast<Map<String, dynamic>>();
     final failed = lastRuns.where((r) => r['error'] != null).length;
     final dry = al['dry_run'];
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: [
-              Text('${al['time']}',
-                  style: TextStyle(
-                      fontSize: 34, fontWeight: FontWeight.w800, color: enabled ? AppTheme.textPrimary : AppTheme.textMuted)),
-              const SizedBox(width: 12),
+    final taskList = ((al['tasks'] as List?) ?? const []).cast<String>();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: AppTheme.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: enabled ? AppTheme.primary.withValues(alpha: 0.3) : AppTheme.borderSubtle,
+        ),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                '${al['time']}',
+                style: TextStyle(
+                  fontSize: 34,
+                  fontWeight: FontWeight.w800,
+                  color: enabled ? AppTheme.textPrimary : AppTheme.textMuted,
+                  letterSpacing: -0.5,
+                ),
+              ),
+              const SizedBox(width: 14),
               Expanded(
-                child: Text(days.isEmpty ? 'Every day' : days.map((d) => _dayLabel[d] ?? d).join(' '),
-                    style: const TextStyle(color: AppTheme.textSecondary)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      days.isEmpty ? 'Every day' : days.map((d) => _dayLabel[d] ?? d).join(' '),
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: enabled ? AppTheme.textPrimary : AppTheme.textMuted,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      dry == true ? '🛡️ Dry-run preview' : (dry == false ? '⚡ Live actions' : '⚙️ Profile safety'),
+                      style: const TextStyle(fontSize: 11.5, color: AppTheme.textSecondary),
+                    ),
+                  ],
+                ),
               ),
               Switch(
                 value: enabled,
@@ -162,32 +278,53 @@ class _AlarmCard extends ConsumerWidget {
                   }
                 },
               ),
-            ]),
-            Wrap(spacing: 6, runSpacing: 4, children: [
-              for (final t in ((al['tasks'] as List?) ?? const []).cast<String>())
-                Chip(label: Text('${tasks[t] ?? t}'), visualDensity: VisualDensity.compact),
-            ]),
-            const SizedBox(height: 6),
-            Text(
-              [
-                if (enabled && al['next'] != null) 'Next: ${'${al['next']}'.replaceFirst('T', ' ')}',
-                if (!enabled) 'Off',
-                if (dry == true) 'Preview only' else if (dry == null) 'Follows your profile safety setting',
-                if (last != null) 'Last: ${'${last['at']}'.replaceFirst('T', ' ')}${failed > 0 ? ' ($failed failed to start)' : ''}',
-              ].join('  ·  '),
-              style: const TextStyle(color: AppTheme.textMuted, fontSize: 12),
-            ),
-            Row(children: [
-              TextButton.icon(onPressed: onEdit, icon: const Icon(Icons.edit_outlined, size: 18), label: const Text('Edit')),
-              TextButton.icon(
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final t in taskList)
+                _buildTaskBadge(t, '${tasks[t] ?? t}'),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            [
+              if (enabled && al['next'] != null) 'Next: ${'${al['next']}'.replaceFirst('T', ' ')}',
+              if (!enabled) 'Alarm disabled',
+              if (last != null) 'Last run: ${'${last['at']}'.replaceFirst('T', ' ')}${failed > 0 ? ' ($failed failed)' : ''}',
+            ].join('  ·  '),
+            style: const TextStyle(color: AppTheme.textMuted, fontSize: 11.5),
+          ),
+          const SizedBox(height: 8),
+          const Divider(height: 16),
+          Row(
+            children: [
+              FilledButton.tonalIcon(
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                ),
                 onPressed: () => onRun(context, ref, {'id': al['id'], 'dry_run': dry == true}, '“${al['label']}”'),
                 icon: const Icon(Icons.play_arrow_rounded, size: 18),
                 label: const Text('Run now'),
               ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                ),
+                onPressed: onEdit,
+                icon: const Icon(Icons.edit_outlined, size: 16),
+                label: const Text('Edit'),
+              ),
               const Spacer(),
               IconButton(
-                tooltip: 'Delete',
-                icon: const Icon(Icons.delete_outline_rounded),
+                tooltip: 'Delete alarm',
+                icon: const Icon(Icons.delete_outline_rounded, size: 20),
                 onPressed: () async {
                   final ok = await showDialog<bool>(
                     context: context,
@@ -205,9 +342,9 @@ class _AlarmCard extends ConsumerWidget {
                   }
                 },
               ),
-            ]),
-          ],
-        ),
+            ],
+          ),
+        ],
       ),
     );
   }

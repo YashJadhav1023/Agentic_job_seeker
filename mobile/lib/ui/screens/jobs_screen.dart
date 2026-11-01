@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../state/providers.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import 'tool_run_screen.dart' show requireClientFrom;
 
 const _statuses = [null, 'new', 'scored', 'queued', 'emailed', 'no_contact', 'skip', 'error'];
 
@@ -20,24 +21,264 @@ class JobsScreen extends ConsumerStatefulWidget {
 class _JobsScreenState extends ConsumerState<JobsScreen> {
   JobFilter _f = const JobFilter();
   String _searchQuery = '';
+  bool _careerAtsOnly = false;
+  final Set<int> _selectedJobIds = {};
+
+  Future<void> _startCareerApply({
+    required List<int> jobIds,
+    required bool dryRun,
+    String? singleJobTitle,
+  }) async {
+    try {
+      final client = requireClientFrom(ref);
+      final r = await client.call('career_apply', {
+        'job_ids': jobIds,
+        'dry_run': dryRun,
+        'limit': jobIds.length,
+      });
+      if (!mounted) return;
+      ref.invalidate(runsProvider);
+      ref.invalidate(queueProvider);
+      final runId = r.runId;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            dryRun
+                ? 'Started Dry-Run form filling for ${singleJobTitle ?? '${jobIds.length} job(s)'}'
+                : 'Started Live Application for ${singleJobTitle ?? '${jobIds.length} job(s)'}',
+          ),
+          action: runId != null
+              ? SnackBarAction(
+                  label: 'View Run',
+                  onPressed: () => context.push('/runs/${Uri.encodeComponent(runId)}'),
+                )
+              : null,
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to start auto-apply: $e'), backgroundColor: AppTheme.error),
+        );
+      }
+    }
+  }
+
+  void _showAutoApplyModal(Map<String, dynamic> j) {
+    bool dryRun = true;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) {
+          final title = '${j['title']}';
+          final company = '${j['company']}';
+          final url = '${j['url'] ?? ''}';
+          final ats = url.contains('greenhouse')
+              ? 'Greenhouse ATS'
+              : (url.contains('lever')
+                  ? 'Lever ATS'
+                  : (url.contains('workday')
+                      ? 'Workday ATS'
+                      : (url.contains('ashby')
+                          ? 'Ashby ATS'
+                          : (url.contains('smartrecruiters')
+                              ? 'SmartRecruiters ATS'
+                              : 'Career Portal'))));
+
+          return Padding(
+            padding: EdgeInsets.fromLTRB(20, 8, 20, MediaQuery.of(ctx).viewInsets.bottom + 28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(colors: [AppTheme.primary, AppTheme.secondary]),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.bolt_rounded, color: Colors.white, size: 20),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Career Form Auto-Apply',
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.textPrimary),
+                          ),
+                          Text(
+                            'Powered by Headless Playwright ATS Engine ($ats)',
+                            style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.card,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppTheme.borderSubtle),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                      const SizedBox(height: 3),
+                      Text(company, style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text('Application Mode',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppTheme.textSecondary)),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () => setModalState(() => dryRun = true),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: dryRun ? AppTheme.primaryContainer.withValues(alpha: 0.5) : AppTheme.card,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: dryRun ? AppTheme.primary : AppTheme.borderSubtle,
+                              width: dryRun ? 1.5 : 1,
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(Icons.camera_alt_outlined,
+                                      size: 16, color: dryRun ? AppTheme.primaryLight : AppTheme.textMuted),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Preview (Dry-Run)',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 12.5,
+                                      color: dryRun ? AppTheme.primaryLight : AppTheme.textPrimary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              const Text(
+                                'Fills form & takes screenshot. No submit.',
+                                style: TextStyle(fontSize: 11, color: AppTheme.textMuted),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () => setModalState(() => dryRun = false),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: !dryRun ? AppTheme.errorContainer.withValues(alpha: 0.3) : AppTheme.card,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: !dryRun ? AppTheme.error : AppTheme.borderSubtle,
+                              width: !dryRun ? 1.5 : 1,
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(Icons.send_rounded, size: 16, color: !dryRun ? AppTheme.error : AppTheme.textMuted),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Live Apply',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 12.5,
+                                      color: !dryRun ? Colors.redAccent : AppTheme.textPrimary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              const Text(
+                                'Submits application form directly.',
+                                style: TextStyle(fontSize: 11, color: AppTheme.textMuted),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      final id = (j['id'] as num?)?.toInt();
+                      if (id != null) {
+                        _startCareerApply(jobIds: [id], dryRun: dryRun, singleJobTitle: title);
+                      }
+                    },
+                    icon: Icon(dryRun ? Icons.visibility_rounded : Icons.rocket_launch_rounded, size: 18),
+                    label: Text(dryRun ? 'Fill Form & Capture Screenshot' : 'Submit Application Now'),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final jobs = ref.watch(jobsProvider(_f));
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Discovered Jobs'),
+        title: Text(_selectedJobIds.isEmpty ? 'Discovered Jobs' : '${_selectedJobIds.length} Selected'),
         actions: [
-          IconButton(
-            tooltip: 'Search all job boards',
-            icon: const Icon(Icons.travel_explore_rounded),
-            onPressed: () => context.push('/tools/multi_board_search', extra: {'save': true}),
-          ),
-          IconButton(
-            tooltip: 'Refresh jobs',
-            icon: const Icon(Icons.refresh_rounded),
-            onPressed: () => ref.invalidate(jobsProvider(_f)),
-          ),
+          if (_selectedJobIds.isNotEmpty)
+            IconButton(
+              tooltip: 'Clear selection',
+              icon: const Icon(Icons.close_rounded),
+              onPressed: () => setState(() => _selectedJobIds.clear()),
+            )
+          else ...[
+            IconButton(
+              tooltip: 'Search all job boards',
+              icon: const Icon(Icons.travel_explore_rounded),
+              onPressed: () => context.push('/tools/multi_board_search', extra: {'save': true}),
+            ),
+            IconButton(
+              tooltip: 'Refresh jobs',
+              icon: const Icon(Icons.refresh_rounded),
+              onPressed: () => ref.invalidate(jobsProvider(_f)),
+            ),
+          ],
           const SizedBox(width: 8),
         ],
       ),
@@ -68,6 +309,15 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 12),
               children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                  child: FilterChip(
+                    avatar: const Icon(Icons.bolt_rounded, size: 15, color: AppTheme.secondaryLight),
+                    label: const Text('Career ATS Only'),
+                    selected: _careerAtsOnly,
+                    onSelected: (on) => setState(() => _careerAtsOnly = on),
+                  ),
+                ),
                 for (final s in _statuses)
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
@@ -97,6 +347,11 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
               onRetry: () => ref.invalidate(jobsProvider(_f)),
               data: (d) {
                 var list = ((d['jobs'] as List?) ?? const []).cast<Map<String, dynamic>>();
+
+                if (_careerAtsOnly) {
+                  final ats = RegExp(r'greenhouse|lever|workday|ashby|smartrecruiters|jobvite|bamboohr|career', caseSensitive: false);
+                  list = list.where((j) => ats.hasMatch('${j['url']}') || '${j['source']}'.toLowerCase().contains('career')).toList();
+                }
 
                 if (_searchQuery.isNotEmpty) {
                   list = list.where((j) {
@@ -156,7 +411,24 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 80),
                     itemCount: list.length,
                     separatorBuilder: (_, _) => const SizedBox(height: 10),
-                    itemBuilder: (c, i) => _JobCard(list[i]),
+                    itemBuilder: (c, i) {
+                      final item = list[i];
+                      final id = (item['id'] as num?)?.toInt() ?? -1;
+                      return _JobCard(
+                        j: item,
+                        isSelected: _selectedJobIds.contains(id),
+                        onToggleSelect: () {
+                          setState(() {
+                            if (_selectedJobIds.contains(id)) {
+                              _selectedJobIds.remove(id);
+                            } else {
+                              _selectedJobIds.add(id);
+                            }
+                          });
+                        },
+                        onAutoApply: () => _showAutoApplyModal(item),
+                      );
+                    },
                   ),
                 );
               },
@@ -164,19 +436,66 @@ class _JobsScreenState extends ConsumerState<JobsScreen> {
           ),
         ],
       ),
+      bottomSheet: _selectedJobIds.isEmpty
+          ? null
+          : Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppTheme.cardElevated,
+                border: const Border(top: BorderSide(color: AppTheme.borderSubtle)),
+                boxShadow: [
+                  BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, -3)),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Text(
+                    '${_selectedJobIds.length} jobs selected',
+                    style: const TextStyle(fontWeight: FontWeight.w700, color: AppTheme.textPrimary),
+                  ),
+                  const Spacer(),
+                  FilledButton.tonal(
+                    onPressed: () => _startCareerApply(
+                      jobIds: _selectedJobIds.toList(),
+                      dryRun: true,
+                    ),
+                    child: const Text('Preview Batch'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed: () => _startCareerApply(
+                      jobIds: _selectedJobIds.toList(),
+                      dryRun: false,
+                    ),
+                    icon: const Icon(Icons.rocket_launch_rounded, size: 16),
+                    label: const Text('Live Apply Batch'),
+                  ),
+                ],
+              ),
+            ),
     );
   }
 }
 
 class _JobCard extends StatelessWidget {
-  const _JobCard(this.j);
+  const _JobCard({
+    required this.j,
+    required this.onAutoApply,
+    this.isSelected = false,
+    this.onToggleSelect,
+  });
   final Map<String, dynamic> j;
+  final VoidCallback onAutoApply;
+  final bool isSelected;
+  final VoidCallback? onToggleSelect;
 
   @override
   Widget build(BuildContext context) {
     final score = (j['score'] as num?)?.round();
     final matched = ((j['matched'] as List?) ?? const []).map((e) => '$e').take(4).toList();
     final status = '${j['status']}';
+    final url = '${j['url'] ?? ''}';
+    final isAts = RegExp(r'greenhouse|lever|workday|ashby|smartrecruiters|jobvite|bamboohr|career', caseSensitive: false).hasMatch(url);
 
     final (scoreBg, scoreFg) = switch (score) {
       null => (AppTheme.surface, AppTheme.textMuted),
@@ -187,17 +506,23 @@ class _JobCard extends StatelessWidget {
 
     return InkWell(
       borderRadius: BorderRadius.circular(16),
+      onLongPress: onToggleSelect,
       onTap: () => showModalBottomSheet(
         context: context,
         isScrollControlled: true,
         showDragHandle: true,
-        builder: (_) => _JobSheet(j),
+        builder: (_) => _JobSheet(j: j, onAutoApply: onAutoApply),
       ),
       child: Container(
         decoration: BoxDecoration(
-          color: AppTheme.card,
+          color: isSelected ? AppTheme.primaryContainer.withValues(alpha: 0.35) : AppTheme.card,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppTheme.borderSubtle),
+          border: Border.all(
+            color: isSelected
+                ? AppTheme.primary
+                : (isAts ? AppTheme.secondary.withValues(alpha: 0.3) : AppTheme.borderSubtle),
+            width: isSelected ? 1.5 : 1,
+          ),
         ),
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -206,6 +531,11 @@ class _JobCard extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (isSelected)
+                  const Padding(
+                    padding: EdgeInsets.only(right: 8, top: 2),
+                    child: Icon(Icons.check_circle_rounded, color: AppTheme.primaryLight, size: 20),
+                  ),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -319,6 +649,31 @@ class _JobCard extends StatelessWidget {
                 ],
               ),
             ],
+            const SizedBox(height: 12),
+            // Quick Action Row
+            Row(
+              children: [
+                FilledButton.tonalIcon(
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    backgroundColor: AppTheme.primary.withValues(alpha: 0.15),
+                  ),
+                  onPressed: onAutoApply,
+                  icon: const Icon(Icons.bolt_rounded, size: 16, color: AppTheme.secondaryLight),
+                  label: const Text(
+                    'Auto Apply',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppTheme.secondaryLight),
+                  ),
+                ),
+                const Spacer(),
+                const Text(
+                  'Tap for details',
+                  style: TextStyle(fontSize: 11, color: AppTheme.textMuted),
+                ),
+                const Icon(Icons.chevron_right_rounded, size: 16, color: AppTheme.textMuted),
+              ],
+            ),
           ],
         ),
       ),
@@ -327,8 +682,9 @@ class _JobCard extends StatelessWidget {
 }
 
 class _JobSheet extends StatelessWidget {
-  const _JobSheet(this.j);
+  const _JobSheet({required this.j, required this.onAutoApply});
   final Map<String, dynamic> j;
+  final VoidCallback onAutoApply;
 
   @override
   Widget build(BuildContext context) {
@@ -428,8 +784,23 @@ class _JobSheet extends StatelessWidget {
           const SizedBox(height: 14),
           const Text('Actions', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppTheme.textPrimary)),
           const SizedBox(height: 10),
+          // Prominent Career ATS Auto Apply Action
           FilledButton.icon(
-            style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 13)),
+            style: FilledButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              backgroundColor: AppTheme.primary,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              Navigator.pop(context);
+              onAutoApply();
+            },
+            icon: const Icon(Icons.bolt_rounded, size: 20, color: AppTheme.secondaryLight),
+            label: const Text('Auto Apply on Career Portal (ATS)', style: TextStyle(fontWeight: FontWeight.w700)),
+          ),
+          const SizedBox(height: 8),
+          FilledButton.tonalIcon(
+            style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
             onPressed: () => go('compose_email', {'job_id': id}),
             icon: const Icon(Icons.edit_note_rounded, size: 20),
             label: const Text('Draft Application Email'),

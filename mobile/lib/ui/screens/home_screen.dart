@@ -146,39 +146,69 @@ class _HeroCard extends StatelessWidget {
                   ],
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: live ? AppTheme.success.withValues(alpha: 0.2) : AppTheme.warning.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: live ? AppTheme.success : AppTheme.warning,
-                    width: 1,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 6,
-                      height: 6,
-                      decoration: BoxDecoration(
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: live ? AppTheme.success.withValues(alpha: 0.2) : AppTheme.warning.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
                         color: live ? AppTheme.success : AppTheme.warning,
-                        shape: BoxShape.circle,
+                        width: 1,
                       ),
                     ),
-                    const SizedBox(width: 6),
-                    Text(
-                      live ? 'LIVE ACTIVE' : 'DRY-RUN SAFE',
-                      style: TextStyle(
-                        color: live ? AppTheme.successLight : AppTheme.warningLight,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.5,
-                      ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: live ? AppTheme.success : AppTheme.warning,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          live ? 'LIVE ACTIVE' : 'DRY-RUN SAFE',
+                          style: TextStyle(
+                            color: live ? AppTheme.successLight : AppTheme.warningLight,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primary.withValues(alpha: 0.25),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: AppTheme.primary.withValues(alpha: 0.4)),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.bolt_rounded, size: 12, color: AppTheme.secondaryLight),
+                        SizedBox(width: 3),
+                        Text(
+                          '6 SLOTS MAX',
+                          style: TextStyle(
+                            color: AppTheme.primaryLight,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.4,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -556,6 +586,7 @@ class _QuickActionsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final actions = <(IconData, String, Color, String, Map<String, dynamic>)>[
+      (Icons.bolt_rounded, 'Career ATS Auto-Apply', const Color(0xFF06B6D4), 'career_apply', {'limit': 5}),
       (Icons.travel_explore_rounded, 'Search All Boards & Apply', AppTheme.primaryLight, '_search', {}),
       (Icons.search_rounded, 'LinkedIn Search & Apply', const Color(0xFF38BDF8), 'search_jobs', {'save': true}),
       (Icons.dynamic_feed_rounded, 'Scan Hiring Posts & Apply', const Color(0xFFFBBF24), 'scan_hiring_posts', {'max_posts': 80, 'auto_apply': true}),

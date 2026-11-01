@@ -210,15 +210,16 @@ class _MiniStat extends StatelessWidget {
   }
 }
 
-class _RunCard extends StatelessWidget {
+class _RunCard extends ConsumerWidget {
   const _RunCard(this.r);
   final Map<String, dynamic> r;
 
   IconData _iconForKind(String kind) {
     if (kind.contains('autopilot')) return Icons.smart_toy_rounded;
+    if (kind.contains('career')) return Icons.bolt_rounded;
     if (kind.contains('login')) return Icons.login_rounded;
     if (kind.contains('post')) return Icons.dynamic_feed_rounded;
-    if (kind.contains('hr')) return Icons.people_outline_rounded;
+    if (kind.contains('hr') || kind.contains('email')) return Icons.people_outline_rounded;
     if (kind.contains('search')) return Icons.search_rounded;
     return Icons.terminal_rounded;
   }
@@ -236,7 +237,7 @@ class _RunCard extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final running = runIsRunning(r);
     final queued = runIsQueued(r);
     final failed = runIsFailed(r);
@@ -323,6 +324,39 @@ class _RunCard extends StatelessWidget {
                   ),
                 ),
                 StatusChip('${r['state']}', isMini: true),
+                if (running || queued) ...[
+                  const SizedBox(width: 6),
+                  IconButton(
+                    iconSize: 18,
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'Cancel task',
+                    icon: const Icon(Icons.cancel_outlined, color: AppTheme.error),
+                    onPressed: () async {
+                      final ok = await showDialog<bool>(
+                        context: context,
+                        builder: (c) => AlertDialog(
+                          title: const Text('Cancel this task?'),
+                          content: Text('Stop ${r['run_id']} and free its execution slot.'),
+                          actions: [
+                            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Keep running')),
+                            FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Stop run')),
+                          ],
+                        ),
+                      );
+                      if (ok == true) {
+                        try {
+                          await requireClientFrom(ref).call('cancel_run', {'run_id': r['run_id']});
+                          ref.invalidate(runsProvider);
+                          ref.invalidate(queueProvider);
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+                          }
+                        }
+                      }
+                    },
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 10),

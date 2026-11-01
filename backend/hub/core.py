@@ -233,15 +233,17 @@ def applied_today() -> int:
 
 # ---------------------------------------------------------------- background runner
 def _profile_groups(kind: str) -> set:
-    """Browser profiles (or exclusive kinds) a run uses. Runs whose sets intersect must not overlap."""
-    if kind.startswith("autopilot"):
+    """Browser profiles (or exclusive kinds) a run uses. Runs whose sets intersect must not overlap.
+    Non-browser runs return empty set so they run concurrently without blocking browser profiles."""
+    k = (kind or "").lower()
+    if k == "autopilot":
         return {"autopilot", "naukri", "linkedin"}
-    if kind.startswith("career-apply") or kind.startswith("career"):
+    if k.startswith(("career-apply", "autopilot-selected")):
         return {"career-apply"}
-    out = {site for site in ("linkedin", "naukri", "indeed") if site in kind}
-    if kind.startswith(("posts", "prepare-linkedin")):
+    out = {site for site in ("linkedin", "naukri", "indeed") if site in k}
+    if k.startswith(("posts", "prepare-linkedin")):
         out.add("linkedin")
-    return out or {kind}
+    return out
 
 
 def _profile_group(kind: str) -> str:  # kept for callers/tests that expect one name
@@ -253,6 +255,8 @@ def running_conflict(kind: str, exclude: str = "") -> str:
     """Run id of an active run that would collide with `kind`, else ''. `exclude` is a parent run that is waiting
     for this one (the autopilot waits for its own platform bots), so it must not count as a conflict."""
     groups = _profile_groups(kind)
+    if not groups:
+        return ""
     with db() as c:
         rows = c.execute("SELECT id, kind FROM runs ORDER BY started DESC LIMIT 30").fetchall()
     for r in rows:
@@ -332,10 +336,28 @@ def _launch(rid: str, kind: str, argv: list, cwd, env_extra: dict, dry_run: bool
     return {"run_id": rid, "pid": proc.pid, "log": str(log), "dry_run": dry_run}
 
 
+def reconcile_stale_runs() -> list:
+    """Finalize any runs in the database whose process died without writing .exit.
+    Returns the list of run_ids reconciled."""
+    reconciled = []
+    with db() as c:
+        rows = [dict(r) for r in c.execute("SELECT id, log, pid FROM runs ORDER BY started DESC LIMIT 100")]
+    for r in rows:
+        exitf = Path(str(r["log"]) + ".exit")
+        if not exitf.exists() and not _alive(r["pid"], r["log"]):
+            try:
+                exitf.write_text("137\n")
+                reconciled.append(r["id"])
+            except OSError:
+                pass
+    return reconciled
+
+
 def dispatch_queue() -> list:
     """Start queued runs, oldest first, while there is a free slot. A run that would share a browser profile with a
     running run (or with an older waiting run) keeps waiting, so a later unrelated run may start before it.
     Returns the ids started. Safe to call often."""
+    reconcile_stale_runs()
     started = []
     with _SPAWN_LOCK:
         with db() as c:
@@ -348,7 +370,7 @@ def dispatch_queue() -> list:
             if active + len(started) >= MAX_PARALLEL:
                 break
             groups = _profile_groups(r["kind"])
-            if groups & waiting_groups or running_conflict(r["kind"], r["parent"] or ""):
+            if groups and (groups & waiting_groups or running_conflict(r["kind"], r["parent"] or "")):
                 waiting_groups |= groups
                 continue
             with db() as c:
@@ -407,17 +429,45 @@ def spawn(kind: str, argv: list, cwd: Path, env_extra: dict, dry_run: bool, args
                     " and this one starts automatically when a slot and its browser profile are free."}
 
 
-def _alive(pid: int) -> bool:
+def _alive(pid: int, log_path: str = "") -> bool:
     if not pid or pid <= 0:
         return False
     try:
         os.kill(pid, 0)
-        stat = Path(f"/proc/{pid}/stat")
-        if stat.exists() and stat.read_text().split(")")[-1].split()[0] == "Z":
-            return False
-        return True
     except OSError:
         return False
+    stat_file = Path(f"/proc/{pid}/stat")
+    if stat_file.exists():
+        try:
+            parts = stat_file.read_text().split(")")[-1].split()
+            if parts and parts[0] == "Z":
+                return False
+        except OSError:
+            return False
+    status_file = Path(f"/proc/{pid}/status")
+    if status_file.exists():
+        try:
+            for line in status_file.read_text().splitlines():
+                if line.startswith("Tgid:"):
+                    tgid = int(line.split()[1])
+                    if tgid != pid:
+                        return False
+                    break
+        except (OSError, ValueError):
+            return False
+    cmd_file = Path(f"/proc/{pid}/cmdline")
+    if cmd_file.exists():
+        try:
+            cmd = cmd_file.read_bytes()
+            if b"launcher.py" not in cmd:
+                return False
+            if log_path:
+                log_name = Path(log_path).name.encode()
+                if log_name and log_name not in cmd:
+                    return False
+        except OSError:
+            return False
+    return True
 
 
 def run_status(rid: str, tail: int = 40) -> dict:
@@ -438,7 +488,13 @@ def run_status(rid: str, tail: int = 40) -> dict:
             code = int(exitf.read_text().strip())
         except ValueError:
             code = None
-    alive = _alive(r["pid"]) and code is None
+    alive = _alive(r["pid"], r["log"]) and code is None
+    if not alive and code is None:
+        code = 137
+        try:
+            exitf.write_text("137\n")
+        except OSError:
+            pass
     state = "running" if alive else ("cancelled" if Path(str(r["log"]) + ".cancel").exists()
                                       else "ok" if code == 0 else "failed" if code is not None else "unknown")
     lines = Path(r["log"]).read_text(errors="replace").splitlines()[-tail:] if Path(r["log"]).exists() else []
@@ -450,13 +506,21 @@ def cancel_run(rid: str) -> dict:
     with db() as c:
         r = c.execute("SELECT * FROM runs WHERE id=?", (rid,)).fetchone()
         if not r and c.execute("DELETE FROM run_queue WHERE id=?", (rid,)).rowcount:
+            dispatch_queue()
             return {"cancelled": True, "queued": True, "run_id": rid}
     if not r:
         return {"error": f"unknown run_id {rid}"}
-    if not _alive(r["pid"]):
-        return {"cancelled": False, "note": "run is not running"}
-    import signal
     Path(str(r["log"]) + ".cancel").write_text(now_iso())
+    exitf = Path(str(r["log"]) + ".exit")
+    if not _alive(r["pid"], r["log"]):
+        if not exitf.exists():
+            try:
+                exitf.write_text("137\n")
+            except OSError:
+                pass
+        dispatch_queue()
+        return {"cancelled": True, "note": "run was not running and has been finalized"}
+    import signal
     try:
         os.killpg(r["pid"], signal.SIGTERM)
     except OSError as e:

@@ -983,7 +983,10 @@ def autopilot_run(a):
     opts["dry_run"] = dry
     env = {"PYTHONUNBUFFERED": "1", "DISPLAY": os.environ.get("DISPLAY", ":0"),
            "PLAYWRIGHT_BROWSERS_PATH": str(core.ROOT / ".browsers")}
-    r = core.spawn("autopilot", [core.PY, str(core.ROOT / "hub" / "autopilot.py"), json.dumps(opts)], core.ROOT, env, dry, opts)
+    kind = "autopilot"
+    if not opts.get("discover", True) and not opts.get("apply", True) and opts.get("email", True):
+        kind = "autopilot-email"
+    r = core.spawn(kind, [core.PY, str(core.ROOT / "hub" / "autopilot.py"), json.dumps(opts)], core.ROOT, env, dry, opts)
     r["note"] = ("DRY-RUN: discovers + scores for real, drafts emails, sends/applies nothing." if dry else
                  "LIVE: will email real contacts and run the apply bots within caps. Stop with autopilot_stop(on=true) or cancel_run.")
     return r

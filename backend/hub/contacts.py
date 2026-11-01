@@ -172,8 +172,15 @@ def reacher_check(email: str):
         return None
     import requests
     try:
-        r = requests.post(url.rstrip("/") + "/v0/check_email", json={"to_email": email}, timeout=40)
-        reach = r.json().get("is_reachable")
+        # Support both legacy v0 API (/v0/check_email) and modern check-if-email-exists (POST /)
+        u = url.rstrip("/")
+        r = requests.post(u + "/v0/check_email", json={"to_email": email}, timeout=40)
+        if r.status_code == 404:
+            r = requests.post(u + "/", json={"to_emails": [email]}, timeout=40)
+        data = r.json()
+        if isinstance(data, list) and data:
+            data = data[0]
+        reach = data.get("is_reachable")
         return {"safe": "valid", "risky": "catch_all", "invalid": "invalid"}.get(reach, "unknown")
     except Exception:  # noqa: BLE001
         return None

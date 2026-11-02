@@ -146,9 +146,19 @@ def parse_jd(title: str, company: str, jd: str, profile: dict | None = None) -> 
     jd = clean_jd
     skills = skills_in(jd, profile)
     yrs = None
-    m = re.search(r"(\d{1,2})\s*(?:\+|-|–|to)?\s*(\d{1,2})?\s*(?:\+)?\s*(?:years|yrs)", jd, re.I)
-    if m:
-        yrs = int(m.group(1))
+    for m in re.finditer(r"(\d{1,2})\s*(?:\+|-|–|to)?\s*(\d{1,2})?\s*(?:\+)?\s*(?:years|yrs)", jd, re.I):
+        raw_val = int(m.group(1))
+        # Ignore company tenure/profitability contexts (e.g. '57 years of unbroken profitability')
+        snippet = jd[max(0, m.start() - 40):min(len(jd), m.end() + 40)].lower()
+        if any(term in snippet for term in ("profitability", "in business", "established", "founded", "history", "legacy", "celebrating")):
+            continue
+        # Cap extracted years filter: treat >15 as unparseable artifact (e.g. 25, 36, 57 years from OCR/salary misreads)
+        if raw_val > 15:
+            import logging
+            logging.getLogger("jobhub").info("Experience parser artifact: %d years in '%s' -> treating as unparseable", raw_val, m.group(0))
+            continue
+        yrs = raw_val
+        break
     subj = None
     m = re.search(r"(?:subject(?:\s+line)?|mention|quote|title)[^\"“”'\n]{0,50}[\"“']([^\"”'\n]{3,90})[\"”']", jd, re.I)
     if m:

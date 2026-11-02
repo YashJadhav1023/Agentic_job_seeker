@@ -91,6 +91,30 @@ def _decode_str(header_val: str) -> str:
     return " ".join(parts)
 
 
+def extract_bounced_address(body: str, known_emails: set[str] | None = None) -> str:
+    """Extract failed recipient address from bounce notification body."""
+    body_lower = body.lower()
+    if known_emails:
+        for ke in known_emails:
+            if ke and ke in body_lower:
+                return ke
+    m = re.search(r"(?:Final-Recipient|Original-Recipient):\s*(?:rfc822;)?\s*([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)", body, re.I)
+    if m:
+        return m.group(1).lower()
+    m = re.search(
+        r"(?:failed|undeliverable|delivery to the following recipient failed|couldn't be delivered to|mailbox unavailable)[^<>\n]{0,80}?<?([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)?>?",
+        body,
+        re.I,
+    )
+    if m and m.group(1):
+        return m.group(1).lower()
+    for cand in re.findall(r"[\w.-]+@[\w.-]+\.\w+", body):
+        cand_l = cand.lower()
+        if not any(cand_l.startswith(p) for p in ("mailer-daemon", "postmaster", "noreply", "no-reply")):
+            return cand_l
+    return ""
+
+
 def classify_content(subject: str, body: str) -> str:
     combined = f"{subject}\n{body[:2000]}"
     if BOUNCE_RX.search(combined):
@@ -256,6 +280,18 @@ def scan_inbox(profile: dict | None = None, max_messages: int = 50) -> dict:
 
             classification = classify_content(subject, body)
             if classification == "bounce":
+                bounced = extract_bounced_address(body, sent_emails)
+                if bounced:
+                    import contacts
+                    contacts.suppress(bounced, "bounced")
+                    with core.db() as db:
+                        db.execute("UPDATE hr_contacts SET status='bounced' WHERE LOWER(email)=LOWER(?)", (bounced,))
+                    results["bounces"] = results.get("bounces", 0) + 1
+                    try:
+                        import notify
+                        notify.push(p, "Email Bounced", f"Delivery failed for {bounced}. Contact auto-suppressed.")
+                    except Exception:
+                        pass
                 continue
 
             # Is this from a recruiter we contacted, or mentions recruiting keywords?
@@ -281,6 +317,10 @@ def scan_inbox(profile: dict | None = None, max_messages: int = 50) -> dict:
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (message_id, from_name, from_email, user, subject, body[:4000], classification, draft, now_iso),
                 )
+                # Flip contact status to replied
+                if from_email:
+                    db.execute("UPDATE hr_contacts SET status='replied' WHERE LOWER(email)=LOWER(?)", (from_email,))
+                    db.execute("UPDATE jobs SET status='replied' WHERE LOWER(contact)=LOWER(?)", (from_email,))
 
             results["replies_found"] += 1
             if classification == "interview_invite":
@@ -297,20 +337,22 @@ def scan_inbox(profile: dict | None = None, max_messages: int = 50) -> dict:
                 "draft": draft[:150] + "...",
             })
 
-            # Send Telegram alert for interviews and CTC inquiries
-            if classification in ("interview_invite", "ctc_inquiry"):
-                try:
-                    import notify
-                    label = "🎉 Interview Invite" if classification == "interview_invite" else "📋 Recruiter Inquiry (CTC/Details)"
-                    notify.telegram(
-                        p,
-                        f"{label} from {from_name} ({from_email})\n"
-                        f"Subject: {subject}\n\n"
-                        f"AI Drafted Reply:\n{draft}\n\n"
-                        f"(Review and send via Job Seeker app)",
-                    )
-                except Exception:
-                    pass
+            # Send dual alerts (ntfy + Telegram) for recruiter replies
+            try:
+                import notify
+                label = "🎉 Interview Invite" if classification == "interview_invite" else (
+                    "📋 Recruiter Inquiry (CTC/Details)" if classification == "ctc_inquiry" else "📬 Recruiter Reply"
+                )
+                notify.push(
+                    p,
+                    label,
+                    f"From: {from_name} ({from_email})\n"
+                    f"Subject: {subject}\n\n"
+                    f"AI Drafted Reply:\n{draft}\n\n"
+                    f"(Review and send via Job Seeker app)",
+                )
+            except Exception:
+                pass
 
         m.logout()
     except Exception as e:

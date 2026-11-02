@@ -318,8 +318,36 @@ def infer_email_pattern(published_emails: List[str], domain: str) -> Optional[st
     return "{first}.{last}"  # standard industry default
 
 
+DISALLOWED_NAME_WORDS = {
+    "apply", "now", "across", "handle", "staffing", "trends", "diversity", "hiring",
+    "recruitment", "recruit", "talent", "workforce", "careers", "jobs", "openings",
+    "vacancy", "opportunities", "position", "positions", "candidate", "candidates",
+    "resume", "resumes", "cv", "interview", "interviews", "it", "hr", "bpo", "gccs",
+    "gics", "sales", "support", "admin", "helpdesk", "team", "department", "headquarters",
+    "branch", "division", "enterprise", "corporate", "services", "solutions", "technologies",
+    "consulting", "end", "start", "about", "contact", "our", "meet", "click", "here",
+    "more", "view", "read", "learn", "who", "what", "where", "how", "when", "why",
+}
+
+
+def is_valid_name_candidate(name: str) -> bool:
+    if not name or not isinstance(name, str):
+        return False
+    if re.search(r"[-–—/\\:,;|#@!?(){}\[\]<>]", name):
+        return False
+    clean = re.sub(r"[^a-zA-Z\s]", "", name).strip()
+    parts = clean.split()
+    if not 2 <= len(parts) <= 3:
+        return False
+    if any(p.lower() in DISALLOWED_NAME_WORDS for p in parts):
+        return False
+    return all(len(p) >= 2 for p in parts)
+
+
 def generate_candidate_emails(name: str, domain: str, pattern: Optional[str] = None) -> List[Dict[str, str]]:
     """Generate candidate addresses for a person based on naming patterns."""
+    if not is_valid_name_candidate(name):
+        return []
     clean_name = re.sub(r"[^a-zA-Z\s]", "", name).strip().lower()
     parts = clean_name.split()
     if not parts:

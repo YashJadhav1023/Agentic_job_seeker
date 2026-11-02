@@ -49,7 +49,8 @@ def min_years(text: str):
     """Smallest minimum-experience figure stated, 0 for fresher posts, None if not stated."""
     if re.search(r"\bfreshers?\b|\b0\s*(?:-|–|to)\s*\d+\s*(?:years?|yrs?)", text or "", re.I):
         return 0
-    mins = [int(m.group(1)) for m in YEARS.finditer(text or "") if int(m.group(1)) <= 30]
+    # Cap extracted years at 15: figures > 15 are unparseable artifacts (e.g. company age or misread salaries)
+    mins = [int(m.group(1)) for m in YEARS.finditer(text or "") if int(m.group(1)) <= 15]
     return min(mins) if mins else None
 
 

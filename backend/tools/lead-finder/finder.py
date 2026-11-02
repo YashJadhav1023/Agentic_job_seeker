@@ -299,7 +299,13 @@ STOP_WORDS = {"our", "the", "about", "team", "meet", "contact", "company", "agen
               "founder", "owner", "ceo", "president", "director", "managing", "chief", "officer",
               "we", "us", "who", "is", "a", "an", "of", "for", "by", "in", "at", "to", "co",
               "inc", "llc", "ltd", "group", "studio", "solutions", "technologies", "media",
-              "design", "web", "development", "software", "partner", "partners", "founded"}
+              "design", "web", "development", "software", "partner", "partners", "founded",
+              "apply", "now", "across", "handle", "staffing", "trends", "diversity", "hiring",
+              "recruitment", "recruit", "talent", "workforce", "careers", "jobs", "openings",
+              "vacancy", "opportunities", "position", "positions", "candidate", "candidates",
+              "resume", "resumes", "cv", "interview", "interviews", "it", "hr", "bpo", "gccs",
+              "gics", "sales", "support", "admin", "helpdesk", "department", "enterprise",
+              "corporate", "consulting", "end", "start", "click", "here", "join", "send"}
 
 
 def merge_people(a, b):
@@ -314,12 +320,23 @@ def merge_people(a, b):
 
 
 def valid_person_name(n):
-    parts = n.split()
+    if not n or not isinstance(n, str):
+        return False
+    # Reject phrase punctuation (hyphens, slashes, colons, ellipses, commas)
+    if re.search(r"[-–—/\\:,;|#@!?(){}\[\]<>]", n):
+        return False
+    parts = n.strip().split()
     if not 2 <= len(parts) <= 3:
         return False
     if any(p.lower() in STOP_WORDS for p in parts):
         return False
-    return all(2 <= len(p) <= 20 for p in parts)
+    # Each part must be purely alphabetic and reasonably sized
+    if not all(p.isalpha() and 2 <= len(p) <= 20 for p in parts):
+        return False
+    # Reject all-lowercase phrase candidates
+    if not any(p[0].isupper() for p in parts):
+        return False
+    return True
 
 
 GENERIC_CO_WORDS = STOP_WORDS | {"seo", "agency", "firm", "consulting", "tech", "labs", "digital",

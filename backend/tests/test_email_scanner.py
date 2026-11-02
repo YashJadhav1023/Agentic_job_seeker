@@ -31,3 +31,29 @@ def test_build_ai_reply_draft_interview():
     assert "Yash Patel" in draft
     assert "available" in draft.lower()
     assert "+919876543210" in draft
+
+
+def test_extract_bounced_address():
+    known = {"dead.contact@telemergeitservices.com", "valid@company.com"}
+    body1 = "Delivery to the following recipient failed permanently:\n\n    dead.contact@telemergeitservices.com\n\nTechnical details..."
+    assert es.extract_bounced_address(body1, known) == "dead.contact@telemergeitservices.com"
+
+    body2 = "Final-Recipient: rfc822; bounced.user@corp.com\nAction: failed"
+    assert es.extract_bounced_address(body2) == "bounced.user@corp.com"
+
+    body3 = "Your message to candidate@domain.com couldn't be delivered."
+    assert es.extract_bounced_address(body3) == "candidate@domain.com"
+
+
+def test_scheduler_inbox_scan_due(monkeypatch):
+    import scheduler
+    import core
+    from datetime import datetime
+    monkeypatch.setattr(core, "load_profile", lambda: {"inbox_scan": {"schedule_every_hours": 0.5}})
+    monkeypatch.setattr(es, "scan_inbox", lambda p: {"scanned": 10, "replies_found": 1})
+    now = datetime(2026, 11, 2, 10, 0)
+    out = scheduler.tick(now)
+    assert "inbox_scan" in out
+    assert out["inbox_scan"]["replies_found"] == 1
+
+

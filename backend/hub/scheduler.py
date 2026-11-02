@@ -69,6 +69,19 @@ def tick(now: datetime | None = None) -> dict:
         core.kv_set(f"scheduler:{key}:result", {"at": now.isoformat(timespec="seconds"),
                                                 "run_id": res.get("run_id"), "error": res.get("error")})
         out[key] = res
+
+    # Recruiter inbound reply & bounce scanner (runs every N hours when configured, 0 = off)
+    inbox_hours = float((p.get("inbox_scan") or {}).get("schedule_every_hours") or 0)
+    if inbox_hours > 0 and _due("inbox_scan", inbox_hours, now):
+        try:
+            import email_scanner
+            scan_res = email_scanner.scan_inbox(p)
+            core.kv_set("scheduler:inbox_scan:last", now.isoformat(timespec="seconds"))
+            core.kv_set("scheduler:inbox_scan:result", {"at": now.isoformat(timespec="seconds"), "result": scan_res})
+            out["inbox_scan"] = scan_res
+        except Exception as e:
+            out["inbox_scan"] = {"error": str(e)}
+
     return out
 
 

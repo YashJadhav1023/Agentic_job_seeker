@@ -75,6 +75,8 @@ def run_lead_finder(
 
         leads = []
         for name, role in list(people.items())[:limit]:
+            if not finder.valid_person_name(name):
+                continue
             cands = finder.candidate_emails(name, target_domain)
             first = finder.ascii_name(name.split()[0])
             on_site = [e for e in personal if e in cands or e.split("@")[0] == first]

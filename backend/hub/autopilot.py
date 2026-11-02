@@ -80,7 +80,34 @@ def restriction_in(text: str) -> str:
 
 
 # ---------------------------------------------------------------- job store
+def normalize_job_key(company: str, title: str) -> tuple[str, str]:
+    """Normalize company name and job title to deduplicate postings across different URLs/boards."""
+    co = re.sub(r"[^a-z0-9]", "", (company or "").lower())
+    for w in ("technologies", "technology", "services", "solutions", "limited", "pvt", "ltd", "inc", "llc", "group", "india", "global", "systems"):
+        if co.endswith(w) and len(co) > len(w):
+            co = co[:-len(w)]
+    clean_t = re.sub(r"[,\(\)\[\]\{\}\-\–—|/]", " ", (title or "").lower())
+    tokens = [w for w in clean_t.split() if w not in (
+        "india", "pune", "mumbai", "hyderabad", "bangalore", "bengaluru", "delhi", "noida",
+        "remote", "hybrid", "walkin", "drive", "urgent", "immediate", "fresher", "experienced"
+    )]
+    norm_t = " ".join(tokens)
+    return co, norm_t
+
+
 def save_job(j: dict) -> bool:
+    norm_co, norm_ti = normalize_job_key(j.get("company", ""), j.get("title", ""))
+    if norm_co and norm_ti:
+        with core.db() as c:
+            existing = c.execute(
+                "SELECT id, company, title FROM jobs WHERE status IN ('new', 'scored', 'emailed', 'applied', 'queued', 'form_submitted')"
+            ).fetchall()
+            for ex in existing:
+                eco, eti = normalize_job_key(ex["company"], ex["title"])
+                if eco == norm_co and eti == norm_ti:
+                    # Duplicate posting detected (different URL/tracking code); do not save duplicate
+                    return False
+
     emails = contacts.extract_emails(j.get("description", ""))
     with core.db() as c:
         cur = c.execute(
@@ -254,8 +281,12 @@ def score_job(profile: dict, c: dict, rp: dict, job: dict) -> tuple:
     if any(b.lower() in (job.get("company") or "").lower() for b in c["company_blocklist"]):
         return 0, [], "company blocklist"
     parsed = composer.parse_jd(title, job.get("company", ""), jd, profile)
-    if parsed["min_years"] and parsed["min_years"] > max_years(profile, c):
-        return 0, [], f"needs {parsed['min_years']}+ years"
+    req_years = parsed["min_years"]
+    if req_years and req_years > 15:
+        # Treat > 15 as parser artifact -> score normally
+        req_years = None
+    if req_years and req_years > max_years(profile, c):
+        return 0, [], f"needs {req_years}+ years"
     jd_skills = parsed["skills"] or composer.skills_in(title, profile)
     matched = [k for k in jd_skills if k in rp["skills"]]
     total = sum(composer.SKILL_WEIGHT.get(k, 1) for k in jd_skills) or 1
@@ -276,7 +307,23 @@ def score_new(profile: dict, c: dict) -> dict:
     out = {"scored": 0, "skipped": 0}
     with core.db() as db:
         rows = [dict(r) for r in db.execute("SELECT * FROM jobs WHERE status='new'")]
+        active = [dict(r) for r in db.execute(
+            "SELECT id, company, title FROM jobs WHERE status IN ('scored', 'emailed', 'applied', 'queued', 'form_submitted')"
+        )]
+    seen_keys: dict[tuple[str, str], int] = {}
+    for r in active:
+        k = normalize_job_key(r.get("company", ""), r.get("title", ""))
+        if k[0] and k[1] and k not in seen_keys:
+            seen_keys[k] = r["id"]
+
     for j in rows:
+        key = normalize_job_key(j.get("company", ""), j.get("title", ""))
+        if key[0] and key[1] and key in seen_keys:
+            prev_id = seen_keys[key]
+            set_job(j["id"], status="skip", score=0.0, matched="[]", reason=f"duplicate of job #{prev_id}")
+            out["skipped"] += 1
+            continue
+
         sc, matched, reason = score_job(profile, c, rp, j)
         if reason or sc < c["min_score"]:
             set_job(j["id"], status="skip", score=sc, matched=json.dumps(matched), reason=reason or f"score {sc} < {c['min_score']}")
@@ -284,6 +331,8 @@ def score_new(profile: dict, c: dict) -> dict:
         else:
             set_job(j["id"], status="scored", score=sc, matched=json.dumps(matched), reason="")
             out["scored"] += 1
+            if key[0] and key[1]:
+                seen_keys[key] = j["id"]
             if sc >= float(c.get("alert_score") or 101):
                 high_match_alert(profile, j, sc, matched)
     return out
@@ -527,7 +576,10 @@ def email_phase(profile: dict, c: dict, dry: bool, job_ids: list | None = None) 
             out["lookups"] += 1
             ct = pick_contact(profile, c, j, restricted)
         if not ct:
-            if json.loads(j.get("jd_emails") or "[]") or restricted or j["apply_type"] != "easy":
+            # Fall back to portal application if job has an application link / URL
+            if j.get("url") or j.get("apply_url"):
+                set_job(j["id"], status="scored", apply_type="portal", reason="portal apply fallback: apply via URL")
+            elif json.loads(j.get("jd_emails") or "[]") or restricted or j["apply_type"] != "easy":
                 set_job(j["id"], status="no_contact", reason="no verified contact")
                 out["no_contact"] += 1
             continue

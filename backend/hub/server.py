@@ -66,8 +66,12 @@ TOOLS = {
                           "optional Telegram alert. BULK: scrolls every results page until it stops growing (dozens of posts per query, many queries). "
                           "auto_apply=true also emails the published HR addresses and applies through the posts' company links "
                           "(DRY-RUN unless dry_run=false and the profile allows live actions). Runs in background; poll run_status.",
-                          _s("", queries={"type": "array", "items": {"type": "string"},
-                                          "description": "optional LinkedIn content-search queries; default rotates through keywords x locations"},
+                          _s("", keywords={"type": "array", "items": {"type": "string"},
+                                           "description": "target job keywords/titles (e.g. DevOps, SRE, Cloud Engineer)"},
+                             locations={"type": "array", "items": {"type": "string"},
+                                        "description": "target locations/cities (e.g. Pune, Bangalore, Remote)"},
+                             queries={"type": "array", "items": {"type": "string"},
+                                      "description": "optional custom LinkedIn queries (overrides keywords x locations)"},
                              max_posts={"type": "integer", "minimum": 5, "maximum": 300, "default": 80,
                                         "description": "stop scrolling a query after this many posts"},
                              scrolls={"type": "integer", "minimum": 3, "maximum": 60, "default": 30},
@@ -791,7 +795,15 @@ def scan_hiring_posts(a):
     the posts' company links (dry-run unless dry_run=false and the profile allows live actions)."""
     p = core.load_profile()
     env = {"PYTHONUNBUFFERED": "1", "PLAYWRIGHT_BROWSERS_PATH": str(core.ROOT / ".browsers")}
-    if a.get("queries"):
+    kws = a.get("keywords")
+    locs = a.get("locations")
+    if kws or locs:
+        prof_search = p.get("search") or {}
+        effective_kws = [str(k).strip() for k in (kws if kws is not None else prof_search.get("keywords") or []) if str(k).strip()]
+        effective_locs = [str(l).strip() for l in (locs if locs is not None else prof_search.get("locations") or []) if str(l).strip() and str(l).lower() != "all"]
+        qs = [f"hiring {k} {l}" for k in effective_kws for l in effective_locs] + [f"hiring {k}" for k in effective_kws]
+        env["JOBHUB_POST_QUERIES"] = json.dumps(list(dict.fromkeys(qs)))
+    elif a.get("queries"):
         env["JOBHUB_POST_QUERIES"] = json.dumps(a["queries"])
     opts = {k: a[k] for k in ("max_posts", "scrolls", "max_queries", "auto_apply") if k in a}
     dry = a.get("dry_run")

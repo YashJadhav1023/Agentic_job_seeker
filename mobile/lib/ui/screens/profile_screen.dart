@@ -17,8 +17,21 @@ class ProfileEditorScreen extends ConsumerStatefulWidget {
 class _ProfileEditorScreenState extends ConsumerState<ProfileEditorScreen> {
   bool _loading = true;
   bool _saving = false;
+  bool _syncingResume = false;
   String? _msg;
   bool _isError = false;
+
+  static Map<String, dynamic> _safeMap(dynamic val) {
+    if (val is Map) {
+      return val.map((k, v) => MapEntry(k.toString(), v));
+    }
+    return <String, dynamic>{};
+  }
+
+  static List<dynamic> _safeList(dynamic val) {
+    if (val is List) return val;
+    return const [];
+  }
 
   // Raw profile data
   Map<String, dynamic> _profile = {};
@@ -123,15 +136,23 @@ class _ProfileEditorScreenState extends ConsumerState<ProfileEditorScreen> {
       final p = await client.profile();
       _rawYaml = '${p['yaml'] ?? ''}';
       _yamlCtrl.text = _rawYaml;
-      _profile = (p['profile'] as Map?)?.cast<String, dynamic>() ?? {};
+      _profile = _safeMap(p['profile']);
 
-      // Populate form controllers from profile dictionary
-      final applicant = (_profile['applicant'] as Map?)?.cast<String, dynamic>() ?? {};
-      final comp = (_profile['compensation'] as Map?)?.cast<String, dynamic>() ?? {};
-      final exp = (_profile['experience'] as Map?)?.cast<String, dynamic>() ?? {};
-      final search = (_profile['search'] as Map?)?.cast<String, dynamic>() ?? {};
-      final loc = (applicant['location'] as Map?)?.cast<String, dynamic>() ?? {};
-      final edu = (applicant['education'] as Map?)?.cast<String, dynamic>() ?? {};
+      // Populate form controllers from profile dictionary safely
+      final applicant = _safeMap(_profile['applicant']);
+      final comp = _safeMap(_profile['compensation']);
+      final exp = _safeMap(_profile['experience']);
+      final search = _safeMap(_profile['search']);
+
+      Map<String, dynamic> loc = _safeMap(applicant['location']);
+      if (applicant['location'] is String && (applicant['location'] as String).trim().isNotEmpty) {
+        loc = {'city': (applicant['location'] as String).trim()};
+      }
+
+      Map<String, dynamic> edu = _safeMap(applicant['education']);
+      if (applicant['education'] is String && (applicant['education'] as String).trim().isNotEmpty) {
+        edu = {'degree': (applicant['education'] as String).trim()};
+      }
 
       // Compensation
       _currentCtcCtrl.text = comp['current_ctc_inr'] != null ? '${comp['current_ctc_inr']}' : '';
@@ -146,8 +167,8 @@ class _ProfileEditorScreenState extends ConsumerState<ProfileEditorScreen> {
       _currentCompanyCtrl.text = '${exp['current_company'] ?? ''}';
       _experienceYearsCtrl.text = '${applicant['experience_years'] ?? '1'}';
       _headlineCtrl.text = '${applicant['headline'] ?? ''}';
-      _keywordsCtrl.text = ((search['keywords'] as List?) ?? const []).join(', ');
-      _skillsCtrl.text = ((search['skills'] as List?) ?? const []).join(', ');
+      _keywordsCtrl.text = _safeList(search['keywords']).map((e) => '$e').join(', ');
+      _skillsCtrl.text = _safeList(search['skills']).map((e) => '$e').join(', ');
 
       // Contact & Location
       _nameCtrl.text = '${applicant['name'] ?? ''}';
@@ -158,7 +179,7 @@ class _ProfileEditorScreenState extends ConsumerState<ProfileEditorScreen> {
       _countryCtrl.text = '${loc['country'] ?? 'India'}';
       _postalCodeCtrl.text = '${loc['postal_code'] ?? ''}';
       _willingToRelocate = '${applicant['willing_to_relocate'] ?? 'Yes'}';
-      _prefLocationsCtrl.text = ((search['locations'] as List?) ?? const []).join(', ');
+      _prefLocationsCtrl.text = _safeList(search['locations']).map((e) => '$e').join(', ');
 
       // Education & Eligibility
       _degreeCtrl.text = '${edu['degree'] ?? "Bachelor's"}';
@@ -186,6 +207,48 @@ class _ProfileEditorScreenState extends ConsumerState<ProfileEditorScreen> {
       _isError = true;
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _syncResume() async {
+    setState(() {
+      _syncingResume = true;
+      _msg = null;
+      _isError = false;
+    });
+
+    try {
+      final client = requireClientFrom(ref);
+      final res = await client.call('resume_to_profile', {
+        'apply': true,
+        'replace_search': true,
+        'use_llm': true,
+      });
+
+      if (res.isError) {
+        throw res.error ?? 'Failed to review & sync resume';
+      }
+
+      await _load();
+
+      final resMap = res.result is Map ? (res.result as Map<String, dynamic>) : {};
+      final via = resMap['via'] ?? 'AI';
+
+      if (mounted) {
+        setState(() {
+          _isError = false;
+          _msg = '✨ Profile auto-filled from resume via $via! Review the fields below, manually fill or edit any details, and tap "Save Profile".';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isError = true;
+          _msg = 'Resume sync failed: $e';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _syncingResume = false);
     }
   }
 
@@ -217,10 +280,10 @@ class _ProfileEditorScreenState extends ConsumerState<ProfileEditorScreen> {
     }
 
     // Merge onto copy of existing profile to preserve unedited sections
-    final updated = Map<String, dynamic>.from(_profile);
+    final updated = _safeMap(_profile);
 
     // Applicant
-    final app = Map<String, dynamic>.from((updated['applicant'] as Map?) ?? {});
+    final app = _safeMap(updated['applicant']);
     app['name'] = _nameCtrl.text.trim();
     app['email'] = _emailCtrl.text.trim();
     app['phone'] = _phoneCtrl.text.trim();
@@ -239,7 +302,7 @@ class _ProfileEditorScreenState extends ConsumerState<ProfileEditorScreen> {
     app['cover_note'] = _coverNoteCtrl.text.trim();
 
     // Location
-    final loc = Map<String, dynamic>.from((app['location'] as Map?) ?? {});
+    final loc = _safeMap(app['location']);
     loc['city'] = _cityCtrl.text.trim();
     loc['state'] = _stateCtrl.text.trim();
     loc['country'] = _countryCtrl.text.trim();
@@ -247,7 +310,7 @@ class _ProfileEditorScreenState extends ConsumerState<ProfileEditorScreen> {
     app['location'] = loc;
 
     // Education
-    final edu = Map<String, dynamic>.from((app['education'] as Map?) ?? {});
+    final edu = _safeMap(app['education']);
     edu['degree'] = _degreeCtrl.text.trim();
     edu['branch'] = _branchCtrl.text.trim();
     edu['university'] = _universityCtrl.text.trim();
@@ -257,14 +320,14 @@ class _ProfileEditorScreenState extends ConsumerState<ProfileEditorScreen> {
     updated['applicant'] = app;
 
     // Experience
-    final exp = Map<String, dynamic>.from((updated['experience'] as Map?) ?? {});
+    final exp = _safeMap(updated['experience']);
     exp['current_company'] = _currentCompanyCtrl.text.trim();
     exp['current_title'] = _currentTitleCtrl.text.trim();
     exp['role_label'] = _headlineCtrl.text.trim().isNotEmpty ? _headlineCtrl.text.trim() : _currentTitleCtrl.text.trim();
     updated['experience'] = exp;
 
     // Compensation
-    final comp = Map<String, dynamic>.from((updated['compensation'] as Map?) ?? {});
+    final comp = _safeMap(updated['compensation']);
     comp['current_ctc_inr'] = parseInt(_currentCtcCtrl.text) ?? 0;
     comp['expected_ctc_inr'] = parseInt(_expectedCtcCtrl.text) ?? (parseInt(_currentCtcCtrl.text) ?? 0);
     comp['min_ctc_inr'] = parseInt(_minCtcCtrl.text) ?? (parseInt(_currentCtcCtrl.text) ?? 0);
@@ -274,7 +337,7 @@ class _ProfileEditorScreenState extends ConsumerState<ProfileEditorScreen> {
     updated['compensation'] = comp;
 
     // Search
-    final search = Map<String, dynamic>.from((updated['search'] as Map?) ?? {});
+    final search = _safeMap(updated['search']);
     if (_keywordsCtrl.text.isNotEmpty) search['keywords'] = parseList(_keywordsCtrl.text);
     if (_skillsCtrl.text.isNotEmpty) search['skills'] = parseList(_skillsCtrl.text);
     if (_prefLocationsCtrl.text.isNotEmpty) search['locations'] = parseList(_prefLocationsCtrl.text);
@@ -472,7 +535,7 @@ class _ProfileEditorScreenState extends ConsumerState<ProfileEditorScreen> {
                       ),
                     ),
 
-                  // Header Explanation Card
+                  // Header Explanation Card with Sync Resume option
                   Container(
                     margin: const EdgeInsets.only(bottom: 16),
                     padding: const EdgeInsets.all(16),
@@ -481,24 +544,50 @@ class _ProfileEditorScreenState extends ConsumerState<ProfileEditorScreen> {
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(color: AppTheme.borderSubtle),
                     ),
-                    child: const Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Icon(Icons.auto_awesome_rounded, color: AppTheme.secondaryLight, size: 24),
-                        SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Auto-Fill Master Profile',
-                                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppTheme.textPrimary),
+                        const Row(
+                          children: [
+                            Icon(Icons.auto_awesome_rounded, color: AppTheme.secondaryLight, size: 24),
+                            SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Auto-Fill Master Profile',
+                                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppTheme.textPrimary),
+                                  ),
+                                  SizedBox(height: 2),
+                                  Text(
+                                    'Fill your salary, experience, and notice period here so the AI auto-fills career ATS forms without stopping.',
+                                    style: TextStyle(fontSize: 12.5, color: AppTheme.textSecondary),
+                                  ),
+                                ],
                               ),
-                              SizedBox(height: 2),
-                              Text(
-                                'Fill your salary, experience, and notice period here so the AI auto-fills career ATS forms without stopping.',
-                                style: TextStyle(fontSize: 12.5, color: AppTheme.textSecondary),
-                              ),
-                            ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        FilledButton.tonalIcon(
+                          onPressed: _syncingResume || _loading || _saving ? null : _syncResume,
+                          icon: _syncingResume
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryLight),
+                                )
+                              : const Icon(Icons.sync_rounded, size: 18),
+                          label: Text(
+                            _syncingResume ? 'Reviewing Resume with AI...' : 'Sync & Auto-Fill from Resume',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                            backgroundColor: AppTheme.primaryContainer,
+                            foregroundColor: AppTheme.primaryLight,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                           ),
                         ),
                       ],

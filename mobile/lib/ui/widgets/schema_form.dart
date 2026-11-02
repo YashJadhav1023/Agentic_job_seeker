@@ -32,9 +32,15 @@ class SchemaFormState extends State<SchemaForm> {
     super.initState();
     widget.properties.forEach((name, p) {
       final init = widget.initial[name] ?? p['default'];
-      if (init != null) _values[name] = init;
+      if (init != null) {
+        if (_isFreeArray(p) && init is String) {
+          _values[name] = init.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+        } else {
+          _values[name] = init;
+        }
+      }
       final t = p['type'];
-      if (t == 'string' && p['enum'] == null || t == 'integer' || t == 'number' || _isFreeArray(p)) {
+      if (t == 'string' && p['enum'] == null || t == 'integer' || t == 'number') {
         final txt = init == null ? '' : (init is List ? init.join(', ') : '$init');
         _text[name] = TextEditingController(text: txt);
       }
@@ -117,9 +123,18 @@ class SchemaFormState extends State<SchemaForm> {
       );
     }
 
+    if (type == 'array' && _isFreeArray(p)) {
+      final list = ((_values[name] as List?) ?? const []).map((e) => '$e').toList();
+      return _ArrayChipsField(
+        label: _label(name),
+        help: help,
+        values: list,
+        onChanged: (updated) => _set(name, updated),
+      );
+    }
+
     final isNum = type == 'integer' || type == 'number';
-    final isArray = type == 'array';
-    final long = !isNum && !isArray && RegExp(r'jd_text|body|description').hasMatch(name);
+    final long = !isNum && RegExp(r'jd_text|body|description').hasMatch(name);
     return TextFormField(
       controller: _text[name],
       keyboardType: isNum ? TextInputType.numberWithOptions(decimal: type == 'number') : (long ? TextInputType.multiline : null),
@@ -127,7 +142,7 @@ class SchemaFormState extends State<SchemaForm> {
       maxLines: long ? 12 : 1,
       decoration: InputDecoration(
         labelText: _label(name),
-        helperText: isArray ? '${help ?? ''}${help == null ? '' : ' · '}comma separated' : help,
+        helperText: help,
         helperMaxLines: 3,
         hintText: [if (p['minimum'] != null) 'min ${p['minimum']}', if (p['maximum'] != null) 'max ${p['maximum']}'].join(', '),
       ),
@@ -144,9 +159,7 @@ class SchemaFormState extends State<SchemaForm> {
       },
       onChanged: (v) {
         final s = v.trim();
-        if (isArray) {
-          _set(name, s.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList());
-        } else if (isNum) {
+        if (isNum) {
           _set(name, s.isEmpty ? null : num.tryParse(s));
         } else {
           _set(name, s);
@@ -170,6 +183,115 @@ class SchemaFormState extends State<SchemaForm> {
           for (final n in names) Padding(padding: const EdgeInsets.only(bottom: 14), child: _field(n, widget.properties[n]!)),
         ],
       ),
+    );
+  }
+}
+
+class _ArrayChipsField extends StatefulWidget {
+  const _ArrayChipsField({
+    required this.label,
+    required this.values,
+    required this.onChanged,
+    this.help,
+  });
+
+  final String label;
+  final String? help;
+  final List<String> values;
+  final ValueChanged<List<String>> onChanged;
+
+  @override
+  State<_ArrayChipsField> createState() => _ArrayChipsFieldState();
+}
+
+class _ArrayChipsFieldState extends State<_ArrayChipsField> {
+  final _controller = TextEditingController();
+
+  void _add(String raw) {
+    final tokens = raw.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    if (tokens.isEmpty) return;
+    final next = [...widget.values];
+    for (final t in tokens) {
+      if (!next.contains(t)) next.add(t);
+    }
+    widget.onChanged(next);
+    _controller.clear();
+  }
+
+  void _remove(String item) {
+    final next = widget.values.where((e) => e != item).toList();
+    widget.onChanged(next);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                widget.label,
+                style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
+            if (widget.values.isNotEmpty)
+              Text(
+                '${widget.values.length} added',
+                style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary),
+              ),
+          ],
+        ),
+        if (widget.help != null) ...[
+          const SizedBox(height: 3),
+          Text(widget.help!, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+        ],
+        const SizedBox(height: 8),
+        if (widget.values.isNotEmpty) ...[
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: widget.values
+                .map((val) => InputChip(
+                      label: Text(val),
+                      deleteIcon: const Icon(Icons.close_rounded, size: 16),
+                      onDeleted: () => _remove(val),
+                      visualDensity: VisualDensity.compact,
+                    ))
+                .toList(),
+          ),
+          const SizedBox(height: 8),
+        ],
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _controller,
+                decoration: InputDecoration(
+                  hintText: 'Type item & tap Add or press Enter',
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  isDense: true,
+                ),
+                textInputAction: TextInputAction.done,
+                onSubmitted: _add,
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.tonal(
+              onPressed: () => _add(_controller.text),
+              child: const Text('Add'),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

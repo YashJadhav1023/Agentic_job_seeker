@@ -99,6 +99,33 @@ services:
       resources:
         limits: {memory: 800m}
 
+  # Mailflare AI Email Suite: self-hosted webmail, JMAP, and AI assistant
+  # Connects to yash.j.devops@gmail.com for SMTP outreach and uses Ollama/Cloud LLM for recruiter classification
+  mailflare:
+    profiles: ["mailflare"]
+    build:
+      context: https://github.com/hieunc229/mailflare.git#main
+    image: mailflare:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: "production"
+      APP_URL: "https://${JOBHUB_DOMAIN}/mail"
+      DATA_DIR: "/data"
+      DATABASE_URL: "file:/data/mailflare.db"
+      SMTP_INBOUND_PORT: "0"
+      MAIL_HOSTNAME: "${JOBHUB_DOMAIN}"
+      SMTP_URL: "smtps://yash.j.devops%40gmail.com:${JOBHUB_SECRET_GMAIL_APP_PASSWORD:-}@smtp.gmail.com:465"
+      AI_BASE_URL: "${MAILFLARE_AI_BASE_URL:-http://ollama:11434/v1}"
+      AI_API_KEY: "${MAILFLARE_AI_API_KEY:-ollama}"
+      AI_MODEL: "${MAILFLARE_AI_MODEL:-llama3.2}"
+    volumes:
+      - mailflare-data:/data
+    expose: ["3000"]
+    deploy:
+      resources:
+        limits: {memory: 512m}
+
 volumes:
   jobhub-data:
   jobhub-runs:
@@ -108,3 +135,4 @@ volumes:
   caddy-data:
   caddy-config:
   ollama-data:
+  mailflare-data:

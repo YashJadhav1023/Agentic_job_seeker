@@ -26,6 +26,11 @@
 		reverse_proxy jobhub:6080
 	}
 
+	# Mailflare: AI Email Assistant & Webmail UI
+	handle_path /mail/* {
+		reverse_proxy mailflare:3000
+	}
+
 	# API + MCP (bearer-token auth enforced by the app). Long timeouts for slow tools like search_jobs.
 	handle {
 		request_body {
@@ -38,6 +43,25 @@
 			}
 		}
 	}
+
+	log {
+		output stdout
+		format console
+	}
+}
+
+# Dedicated subdomain for Mailflare (automatic HTTPS Let's Encrypt, pure AWS)
+mail.{$JOBHUB_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	reverse_proxy mailflare:3000
 
 	log {
 		output stdout

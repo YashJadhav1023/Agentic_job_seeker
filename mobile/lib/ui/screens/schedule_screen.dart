@@ -185,14 +185,14 @@ class _AlarmCard extends ConsumerWidget {
 
   Widget _buildTaskBadge(String task, String label) {
     final (icon, color) = switch (task) {
-      'send_emails' => (Icons.mark_email_read_rounded, AppTheme.accentIndigo),
-      'find_emails' => (Icons.person_search_rounded, AppTheme.accentCyan),
-      'bulk_email' => (Icons.forward_to_inbox_rounded, AppTheme.accentPurple),
-      'linkedin_apply' => (Icons.business_center_rounded, AppTheme.accentSky),
+      'send_emails' => (Icons.mark_email_read_rounded, AppTheme.primaryLight),
+      'find_emails' => (Icons.person_search_rounded, AppTheme.secondaryLight),
+      'bulk_email' => (Icons.forward_to_inbox_rounded, AppTheme.primaryLight),
+      'linkedin_apply' => (Icons.business_center_rounded, AppTheme.secondaryLight),
       'naukri_apply' => (Icons.work_history_rounded, AppTheme.warning),
-      'scan_posts' => (Icons.feed_rounded, AppTheme.accentTeal),
-      'global_search' => (Icons.travel_explore_rounded, AppTheme.success),
-      'whatsapp_send' => (Icons.chat_bubble_rounded, AppTheme.accentGreen),
+      'scan_posts' => (Icons.feed_rounded, AppTheme.secondaryLight),
+      'global_search' => (Icons.travel_explore_rounded, AppTheme.info),
+      'whatsapp_send' => (Icons.chat_bubble_rounded, AppTheme.success),
       _ => (Icons.task_alt_rounded, AppTheme.primaryLight),
     };
     return Container(

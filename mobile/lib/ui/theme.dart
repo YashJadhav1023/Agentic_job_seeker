@@ -4,16 +4,18 @@ import 'package:flutter/material.dart';
 class AppTheme {
   AppTheme._();
 
-  // Primary brand palette: Deep Indigo & Cyan
-  static const Color primary = Color(0xFF6366F1); // Modern Indigo
+  // Primary brand palette: Modern Deep Indigo
+  static const Color primary = Color(0xFF6366F1);
   static const Color primaryLight = Color(0xFF818CF8);
   static const Color primaryContainer = Color(0xFF1E1B4B);
-  static const Color heroGradientStart = Color(0xFF312E81);
+  static const Color heroGradientStart = Color(0xFF2E2B6B);
 
-  static const Color secondary = Color(0xFF06B6D4); // Cyan
+  // Secondary brand palette: Tech Sky Blue
+  static const Color secondary = Color(0xFF0EA5E9);
   static const Color secondaryLight = Color(0xFF38BDF8);
+  static const Color secondaryContainer = Color(0xFF0C4A6E);
 
-  // Status & semantic colors
+  // Status & semantic colors (Disciplined 4-color palette per COL-018)
   static const Color success = Color(0xFF10B981); // Emerald
   static const Color successLight = Color(0xFF34D399);
   static const Color successContainer = Color(0xFF064E3B);
@@ -26,17 +28,8 @@ class AppTheme {
   static const Color errorLight = Color(0xFFFCA5A5);
   static const Color errorContainer = Color(0xFF7F1D1D);
 
-  // Semantic feature accent tokens (Material 3 Expressive)
-  static const Color accentIndigo = Color(0xFF6366F1);
-  static const Color accentCyan = Color(0xFF06B6D4);
-  static const Color accentSky = Color(0xFF38BDF8);
-  static const Color accentAmber = Color(0xFFFBBF24);
-  static const Color accentEmerald = Color(0xFF34D399);
-  static const Color accentPurple = Color(0xFFA78BFA);
-  static const Color accentPink = Color(0xFFF472B6);
-  static const Color accentGreen = Color(0xFF22C55E);
-  static const Color accentOrange = Color(0xFFFB923C);
-  static const Color accentTeal = Color(0xFF2DD4BF);
+  static const Color info = Color(0xFF38BDF8); // Sky
+  static const Color infoContainer = Color(0xFF075985);
 
   // 8pt grid spacing tokens
   static const double space4 = 4.0;
@@ -47,13 +40,13 @@ class AppTheme {
   static const double space24 = 24.0;
   static const double space32 = 32.0;
 
-  // Backgrounds & surfaces (Deep modern slate)
-  static const Color background = Color(0xFF0B0F19);
-  static const Color surface = Color(0xFF111827);
-  static const Color card = Color(0xFF182234);
-  static const Color cardElevated = Color(0xFF1E293B);
-  static const Color border = Color(0xFF2E3B52);
-  static const Color borderSubtle = Color(0xFF1E293B);
+  // Backgrounds & surfaces (Refined slate surfaces, reducing halation per COL-008)
+  static const Color background = Color(0xFF0B1120);
+  static const Color surface = Color(0xFF131D31);
+  static const Color card = Color(0xFF172239);
+  static const Color cardElevated = Color(0xFF1E2C48);
+  static const Color border = Color(0xFF2A3A5A);
+  static const Color borderSubtle = Color(0xFF22304C);
 
   // Text colors
   static const Color textPrimary = Color(0xFFF8FAFC);

@@ -285,15 +285,63 @@ def create_app() -> FastAPI:
         try:
             data = yaml.safe_load(raw.decode("utf-8"))
         except (yaml.YAMLError, UnicodeDecodeError) as e:
-            raise HTTPException(422, f"invalid YAML: {e}") from e
+            raise HTTPException(422, f"invalid YAML/JSON: {e}") from e
         if not isinstance(data, dict) or [k for k in PROFILE_REQUIRED if k not in data]:
             raise HTTPException(422, f"profile must contain sections: {', '.join(PROFILE_REQUIRED)}")
         target = Path(os.environ.get("JOBHUB_PROFILE") or (core.ROOT / "profile.yaml"))
         tmp = target.with_suffix(".tmp")
-        tmp.write_bytes(raw)
+        # If payload was JSON, serialize as clean readable YAML
+        if req.headers.get("content-type", "").startswith("application/json") or raw.strip().startswith(b"{"):
+            tmp.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        else:
+            tmp.write_bytes(raw)
         tmp.replace(target)
         core.PROFILE_PATH = target
         return {"saved": str(target), "missing_profile_fields": core.missing_profile_fields(data)}
+
+    @app.patch("/api/v1/profile", dependencies=auth)
+    async def patch_profile(patch_data: dict = Body(...)):
+        """Recursively update specific sections of profile.yaml from structured JSON."""
+        p = core.load_profile()
+        def _merge(orig, patch):
+            for k, v in patch.items():
+                if isinstance(v, dict) and isinstance(orig.get(k), dict):
+                    _merge(orig[k], v)
+                else:
+                    orig[k] = v
+        _merge(p, patch_data)
+        target = Path(os.environ.get("JOBHUB_PROFILE") or (core.ROOT / "profile.yaml"))
+        tmp = target.with_suffix(".tmp")
+        tmp.write_text(yaml.safe_dump(p, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        tmp.replace(target)
+        core.PROFILE_PATH = target
+        return {"saved": str(target), "missing_profile_fields": core.missing_profile_fields(p)}
+
+    @app.get("/api/v1/form-questions", dependencies=auth)
+    def get_form_questions(all: bool = False):
+        import form_qa
+        return {"questions": form_qa.all_questions() if all else form_qa.pending()}
+
+    @app.post("/api/v1/form-questions/answer", dependencies=auth)
+    def answer_form_question(body: dict = Body(...)):
+        import form_qa
+        qid = int(body.get("id", 0))
+        ans = str(body.get("answer", ""))
+        return {"saved": form_qa.save_answer(qid, ans)}
+
+    @app.post("/api/v1/form-questions/custom", dependencies=auth)
+    def add_custom_form_question(body: dict = Body(...)):
+        import form_qa
+        q = str(body.get("question", "")).strip()
+        ans = str(body.get("answer", "")).strip()
+        if not q or not ans:
+            raise HTTPException(422, "question and answer are required")
+        form_qa.record_unanswered(q, [])
+        with form_qa._db() as c:
+            row = c.execute("SELECT id FROM form_qa WHERE qkey=?", (form_qa.key(q),)).fetchone()
+            if row:
+                form_qa.save_answer(row["id"], ans)
+        return {"ok": True}
 
     @app.get("/api/v1/resume", dependencies=auth)
     def get_resume():

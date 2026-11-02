@@ -99,6 +99,33 @@ class ApiClient {
   Future<Map<String, dynamic>> saveProfile(String yaml) async => (await _send(() => _http.put(_u('/api/v1/profile'),
       headers: {..._headers, 'Content-Type': 'application/x-yaml'}, body: utf8.encode(yaml)))) as Map<String, dynamic>;
 
+  Future<Map<String, dynamic>> saveProfileJson(Map<String, dynamic> data) async =>
+      (await _send(() => _http.put(_u('/api/v1/profile'),
+          headers: {..._headers, 'Content-Type': 'application/json'}, body: jsonEncode(data)))) as Map<String, dynamic>;
+
+  Future<Map<String, dynamic>> patchProfile(Map<String, dynamic> patch) async =>
+      (await _send(() => _http.patch(_u('/api/v1/profile'),
+          headers: {..._headers, 'Content-Type': 'application/json'}, body: jsonEncode(patch)))) as Map<String, dynamic>;
+
+  Future<List<dynamic>> formQuestions({bool all = false}) async {
+    final res = (await _send(() => _http.get(_u('/api/v1/form-questions', {'all': '$all'}), headers: _headers))) as Map<String, dynamic>;
+    return (res['questions'] as List?) ?? const [];
+  }
+
+  Future<bool> answerFormQuestion(int id, String answer) async {
+    final res = (await _send(() => _http.post(_u('/api/v1/form-questions/answer'),
+        headers: {..._headers, 'Content-Type': 'application/json'},
+        body: jsonEncode({'id': id, 'answer': answer})))) as Map<String, dynamic>;
+    return res['saved'] == true;
+  }
+
+  Future<bool> addCustomFormQuestion(String question, String answer) async {
+    final res = (await _send(() => _http.post(_u('/api/v1/form-questions/custom'),
+        headers: {..._headers, 'Content-Type': 'application/json'},
+        body: jsonEncode({'question': question, 'answer': answer})))) as Map<String, dynamic>;
+    return res['ok'] == true;
+  }
+
   /// Upload the resume. By default the server refreshes profile skills from it; [replaceSearch] also lets it pick
   /// the job titles to search, [syncNaukri] pushes it to the Naukri profile.
   Future<Map<String, dynamic>> uploadResume(List<int> bytes, String filename,

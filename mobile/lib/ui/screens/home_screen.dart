@@ -413,7 +413,7 @@ class _SetupChecklist extends StatelessWidget {
     final creds = ((s['credentials'] as Map?) ?? const {}).cast<String, dynamic>();
     final steps = <(String, bool, String)>[
       ('Resume uploaded', ((s['resume'] as Map?)?['exists']) == true, '/settings'),
-      ('Profile complete', ((s['missing_profile_fields'] as List?) ?? const []).isEmpty, '/settings'),
+      ('Profile complete', ((s['missing_profile_fields'] as List?) ?? const []).isEmpty, '/settings/profile'),
       ('Gmail linked', creds['gmail_app_password'] == true, '/settings'),
       ('Naukri login', sessions['naukri'] == true, '/tools/login_platform'),
       ('LinkedIn login', sessions['linkedin'] == true, '/tools/login_platform'),
@@ -586,17 +586,17 @@ class _QuickActionsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final actions = <(IconData, String, Color, String, Map<String, dynamic>)>[
-      (Icons.bolt_rounded, 'Career ATS Auto-Apply', AppTheme.accentCyan, 'career_apply', {'limit': 5}),
+      (Icons.bolt_rounded, 'Career ATS Auto-Apply', AppTheme.secondaryLight, 'career_apply', {'limit': 5}),
       (Icons.travel_explore_rounded, 'Search All Boards & Apply', AppTheme.primaryLight, '_search', {}),
-      (Icons.search_rounded, 'LinkedIn Search & Apply', AppTheme.accentSky, 'search_jobs', {'save': true}),
-      (Icons.dynamic_feed_rounded, 'Scan Hiring Posts & Apply', AppTheme.accentAmber, 'scan_hiring_posts', {'max_posts': 80, 'auto_apply': true}),
-      (Icons.assignment_turned_in_rounded, 'Easy Apply Bot', AppTheme.accentEmerald, 'apply_jobs', {}),
-      (Icons.contact_mail_rounded, 'Find HR Emails', AppTheme.accentPurple, 'find_hr_emails', {}),
-      (Icons.forward_to_inbox_rounded, 'Bulk Email HR', AppTheme.accentPink, 'send_hr_emails', {}),
-      (Icons.chat_rounded, 'WhatsApp', AppTheme.accentGreen, '_whatsapp', {}),
-      (Icons.alarm_rounded, 'Schedule (alarms)', AppTheme.accentOrange, '_schedule', {}),
-      (Icons.insights_rounded, 'Progress Report', AppTheme.accentTeal, '_report', {}),
-      (Icons.monitor_heart_rounded, 'System Status', AppTheme.successLight, '_status', {}),
+      (Icons.search_rounded, 'LinkedIn Search & Apply', AppTheme.secondaryLight, 'search_jobs', {'save': true}),
+      (Icons.dynamic_feed_rounded, 'Scan Hiring Posts & Apply', AppTheme.primaryLight, 'scan_hiring_posts', {'max_posts': 80, 'auto_apply': true}),
+      (Icons.assignment_turned_in_rounded, 'Easy Apply Bot', AppTheme.primaryLight, 'apply_jobs', {}),
+      (Icons.contact_mail_rounded, 'Find HR Emails', AppTheme.secondaryLight, 'find_hr_emails', {}),
+      (Icons.forward_to_inbox_rounded, 'Bulk Email HR', AppTheme.primaryLight, 'send_hr_emails', {}),
+      (Icons.chat_rounded, 'WhatsApp Alerts', AppTheme.successLight, '_whatsapp', {}),
+      (Icons.alarm_rounded, 'Schedule (alarms)', AppTheme.warningLight, '_schedule', {}),
+      (Icons.insights_rounded, 'Progress Report', AppTheme.secondaryLight, '_report', {}),
+      (Icons.monitor_heart_rounded, 'System Status', AppTheme.info, '_status', {}),
       (Icons.grid_view_rounded, 'All Tools', AppTheme.primaryLight, '_all_tools', {}),
     ];
 

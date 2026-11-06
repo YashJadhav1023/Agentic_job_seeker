@@ -53,7 +53,7 @@ def read_secret(name: str):
     f = SECRETS / name
     if f.exists():
         mode = f.stat().st_mode & 0o777
-        if mode & 0o077:
+        if os.name != "nt" and (mode & 0o077):
             raise PermissionError(f"{f} must be chmod 600 (is {oct(mode)})")
         return f.read_text().strip()
     # Container fallback: JOBHUB_SECRET_<NAME> (e.g. JOBHUB_SECRET_GMAIL_APP_PASSWORD) from the .env file.
@@ -279,7 +279,8 @@ def running_runs() -> list:
 # Env vars that only our own code may see. Runs of kinds in THIRD_PARTY_KINDS execute vendored upstream code.
 THIRD_PARTY_KINDS = ("apply-",)
 SECRET_ENV = {"KIRO_API_KEY", "LLM_API_KEY", "TELEGRAM_BOT_TOKEN", "JOBHUB_API_TOKEN", "JOBHUB_FIRECRAWL_API_KEY",
-              "JOBHUB_VNC_PASSWORD", "JOBHUB_BROWSER_PASSWORD", "JOBHUB_BROWSER_HASH", "FIRECRAWL_API_KEY"}
+              "JOBHUB_VNC_PASSWORD", "JOBHUB_BROWSER_PASSWORD", "JOBHUB_BROWSER_HASH", "FIRECRAWL_API_KEY",
+              "JOBHUB_JINA_API_KEY", "JINA_API_KEY"}
 
 
 def clear_stale_browser_locks() -> list:

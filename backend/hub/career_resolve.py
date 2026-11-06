@@ -213,7 +213,7 @@ def resolve(job: dict, use_firecrawl: bool = True, http=None, domain_of=None, fi
         import career_scan
         fc = firecrawl or career_scan
         if not career_scan.api_key() and firecrawl is None:
-            return {"why": "no public ATS board and no Firecrawl key to read the careers page", "domain": domain}
+            return {"why": "no public ATS board and no scanner key to read the careers page", "domain": domain}
         page = fc.find_career_url(domain)
         if not page:
             return {"why": f"no careers page found on {domain}", "domain": domain}

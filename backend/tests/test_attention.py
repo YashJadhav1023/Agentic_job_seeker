@@ -129,3 +129,60 @@ def test_request_without_token_is_notified_by_the_server_sweep(monkeypatch, sent
     assert attention.notify_pending() == 1 and "Naukri" in sent[0][0]
     assert attention.notify_pending() == 0          # sent once only
     assert attention.get(rid)["notified"] == 1
+
+
+def test_answer_is_returned_to_the_waiting_bot(sent):
+    rid = attention.request("otp", "Workday", "https://x", "Enter the code sent to your phone", profile=P)
+    assert attention.answer(rid, " 482913 ")
+    assert attention.wait_value(rid, sleep=lambda s: None) == "482913"
+    assert attention.get(rid)["status"] == "done"
+
+
+def test_answer_after_expiry_is_refused(sent):
+    rid = attention.request("otp", "Workday", "u", "code", profile={"human_help": {"wait_minutes": 0}})
+    time.sleep(0.01)
+    assert attention.answer(rid, "1") is False
+    assert attention.wait_value(rid, sleep=lambda s: None) is None
+
+
+def test_wait_value_gives_up_when_skipped(sent):
+    rid = attention.request("question", "Acme", "u", "Notice period?", profile=P)
+    attention.resolve(rid, "skipped")
+    assert attention.wait_value(rid, sleep=lambda s: None) is None
+
+
+def test_wait_returns_when_user_marks_done_even_if_page_check_lags(sent):
+    rid = attention.request("login", "Workday", "u", "r", profile=P)
+    attention.resolve(rid, "done")
+    ticks = iter(range(0, 10**6, 600))          # the clock runs past expiry, so an old loop ends instead of hanging
+    assert attention.wait(rid, lambda: False, sleep=lambda s: None, now=lambda: time.time() + next(ticks)) is True
+
+
+def test_ask_value_needs_no_display(monkeypatch, sent):
+    monkeypatch.delenv("DISPLAY")
+    real_request = attention.request
+
+    def request_and_answer(*a, **k):
+        rid = real_request(*a, **k)
+        attention.answer(rid, "42")
+        return rid
+    monkeypatch.setattr(attention, "request", request_and_answer)
+    assert attention.ask_value("question", "Acme", "u", "Years of Kubernetes?", profile=P, sleep=lambda s: None) == "42"
+    assert attention.ask_value("otp", "Acme", "u", "code", profile={"human_help": {"enabled": False}}) is None
+
+
+def test_value_requests_notify_without_browser_link(sent):
+    attention.request("otp", "Workday", "u", "Enter the code sent to your phone", "SRE @ X", P)
+    title, text, url = sent[0]
+    assert "code" in title.lower() and url == ""
+
+
+def test_list_hides_value_and_flags_needs_value(sent):
+    import server
+    rid = attention.request("otp", "Workday", "u", "code", profile=P)
+    attention.request("login", "Workday", "u", "r", profile=P)
+    rows = {r["id"]: r for r in server.attention_list({})["requests"]}
+    assert rows[rid]["needs_value"] is True and "value" not in rows[rid]
+    assert [r["needs_value"] for i, r in rows.items() if i != rid] == [False]
+    assert server.attention_resolve({"id": rid, "value": "777"}) == {"closed": True}
+    assert attention.get(rid)["value"] == "777"

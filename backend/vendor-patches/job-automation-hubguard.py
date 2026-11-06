@@ -190,6 +190,9 @@ async def wait_for_human(page, site: str, kind: str, reason: str, is_clear, job:
                 return True
         except Exception:  # noqa: BLE001 - the page navigates while the user works in it
             pass
+        if r["status"] == "done":  # you tapped "done" in the app: trust it even if the page check lags
+            print(f"  ✅ you marked it done, continuing (request #{rid})", flush=True)
+            return True
         if time.time() >= r["expires"]:
             att.resolve(rid, "expired")
             continue

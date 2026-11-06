@@ -20,9 +20,10 @@ import time
 import core
 
 DEFAULTS = {"enabled": True, "wait_minutes": 15}
+VALUE_KINDS = ("otp", "question")  # the user types a value in the app instead of working in the remote browser
 _TABLE = """CREATE TABLE IF NOT EXISTS attention(
   id INTEGER PRIMARY KEY, kind TEXT, site TEXT, url TEXT, job TEXT, reason TEXT, status TEXT DEFAULT 'open',
-  created REAL, expires REAL, resolved_at TEXT, notified INTEGER DEFAULT 0)"""
+  created REAL, expires REAL, resolved_at TEXT, notified INTEGER DEFAULT 0, value TEXT)"""
 
 
 def cfg(profile: dict | None = None) -> dict:
@@ -40,6 +41,8 @@ def available(profile: dict | None = None) -> bool:
 def _db():
     c = core.db()
     c.execute(_TABLE)
+    if "value" not in {r[1] for r in c.execute("PRAGMA table_info(attention)")}:
+        c.execute("ALTER TABLE attention ADD COLUMN value TEXT")  # DBs created before answers existed
     return c
 
 
@@ -96,6 +99,17 @@ def resolve(rid: int, status: str = "done") -> bool:
     return bool(n)
 
 
+def answer(rid: int, value: str) -> bool:
+    """The user's answer from the app (an OTP, a form answer). Accepted only while the request is open and not expired."""
+    value = str(value or "").strip()[:200]
+    if not value:
+        return False
+    with _db() as c:
+        n = c.execute("UPDATE attention SET status='done', value=?, resolved_at=? WHERE id=? AND status='open' AND expires>=?",
+                      (value, core.now_iso(), rid, time.time())).rowcount
+    return bool(n)
+
+
 def request(kind: str, site: str, url: str, reason: str, job: str = "", profile: dict | None = None) -> int:
     """Open a request. kind: login | human_check. -> request id.
 
@@ -122,13 +136,20 @@ def _notify(rid: int, profile: dict | None = None) -> bool:
             return False
     p = profile if profile is not None else core.load_profile()
     minutes = max(1, int((r["expires"] - time.time()) // 60))
-    what = {"login": f"Sign in to {r['site']}", "human_check": f"{r['site']} wants to check you are human"}.get(
+    what = {"login": f"Sign in to {r['site']}", "human_check": f"{r['site']} wants to check you are human",
+            "otp": f"Enter the code {r['site']} sent you", "question": f"{r['site']} asks: {r['reason']}"}.get(
         r["kind"], f"{r['site']} needs you")
-    text = (f"{what} so the bot can continue" + (f" applying to {r['job']}" if r["job"] else "") +
-            f". It waits {minutes} min. Open the link, finish the step in the browser, then leave it open.")
+    if r["kind"] in VALUE_KINDS:
+        text = (f"{r['reason']}" + (f" ({r['job']})" if r["job"] else "") +
+                f". Type it in the app; the bot waits {minutes} min.")
+        link = ""
+    else:
+        text = (f"{what} so the bot can continue" + (f" applying to {r['job']}" if r["job"] else "") +
+                f". It waits {minutes} min. Open the link, finish the step in the browser, then leave it open.")
+        link = open_link(rid)
     try:
         import notify
-        return bool(notify.push(p, "Job bot needs you: " + what, text, open_link(rid)))
+        return bool(notify.push(p, "Job bot needs you: " + what, text, link))
     except Exception:  # noqa: BLE001 - a failed alert must never break the run
         return False
 
@@ -153,10 +174,35 @@ def wait(rid: int, cleared, poll: float = 5.0, sleep=time.sleep, now=time.time) 
                 return True
         except Exception:  # noqa: BLE001 - the page may be navigating while the user works in it
             pass
+        if r["status"] == "done":  # the user tapped "done" in the app; trust it (the page check may lag behind)
+            return True
         if now() >= r["expires"]:
             resolve(rid, "expired")
             return False
         sleep(poll)
+
+
+def wait_value(rid: int, poll: float = 5.0, sleep=time.sleep, now=time.time) -> str | None:
+    """Block until the user answers in the app (-> the value) or skips / the request expires (-> None)."""
+    while True:
+        r = get(rid)
+        if not r or r["status"] in ("skipped", "expired"):
+            return None
+        if r["status"] == "done":
+            return r.get("value") or None
+        if now() >= r["expires"]:
+            resolve(rid, "expired")
+            return None
+        sleep(poll)
+
+
+def ask_value(kind: str, site: str, url: str, reason: str, job: str = "", profile: dict | None = None,
+              sleep=time.sleep) -> str | None:
+    """Ask the user to type something in the app (kind otp | question). Works without the remote browser."""
+    if not cfg(profile).get("enabled"):
+        return None
+    rid = request(kind, site, url, reason, job, profile)
+    return wait_value(rid, sleep=sleep)
 
 
 def ask_and_wait(kind: str, site: str, url: str, reason: str, cleared, job: str = "", log=print,

@@ -282,15 +282,18 @@ TOOLS = {
                       "the profile's live-actions switch and recipients_expect_my_message=true. Daily cap, pauses and 30-day no-repeat always apply. Background run.",
                       _s("", limit={"type": "integer", "minimum": 1, "maximum": 50}, dry_run={"type": "boolean"})),
     "queue_status": ("Run queue: what is running now, what is waiting (FIFO) and the limit (3 runs at once).", _s("")),
-    "attention_list": ("Open 'the bot needs you' requests: a site wants a login or a human check during a run. Each has a link "
-                       "(open_url) to the remote browser where the bot waits; it continues by itself once the step is done.", _s("")),
+    "attention_list": ("Open 'the bot needs you' requests: a site wants a login, a human check, a code (otp) or an answer "
+                       "(question) during a run. Login / human-check rows have a link (open_url) to the remote browser where the "
+                       "bot waits; rows with needs_value=true want you to send the code or answer with attention_resolve.", _s("")),
     "form_questions": ("Application-form questions the bot could not answer from your profile (it skipped those forms). "
                        "Answer each once with form_answer and every later form that asks it is filled with your answer. all=true "
                        "also lists answered ones.", _s("", all={"type": "boolean"})),
     "form_answer": ("Save your answer to a form question (id from form_questions). Reused on every later form.",
                     _s("", id={"type": "integer"}, answer={"type": "string", "maxLength": 1000})),
-    "attention_resolve": ("Close a 'needs you' request: skipped = the bot gives up on that job now; done = you finished it.",
-                          _s("", id={"type": "integer"}, status={"type": "string", "enum": ["done", "skipped"]})),
+    "attention_resolve": ("Close a 'needs you' request: skipped = the bot gives up on that job now; done = you finished it; "
+                          "value = the code or answer the bot asked for (otp / question rows).",
+                          _s("", id={"type": "integer"}, status={"type": "string", "enum": ["done", "skipped"]},
+                             value={"type": "string", "maxLength": 200})),
 }
 READ = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 READ_NET = dict(READ, openWorldHint=True)
@@ -659,7 +662,9 @@ def attention_list(_):
     import attention
     items = attention.pending()
     for r in items:
-        r["open_url"] = attention.open_link(r["id"])
+        r.pop("value", None)
+        r["needs_value"] = r["kind"] in attention.VALUE_KINDS
+        r["open_url"] = "" if r["needs_value"] else attention.open_link(r["id"])
         r["minutes_left"] = max(0, int((r.pop("expires") - time.time()) // 60))
     return {"requests": items, "available": attention.available()}
 
@@ -679,6 +684,8 @@ def form_answer(a):
 
 def attention_resolve(a):
     import attention
+    if str(a.get("value") or "").strip():
+        return {"closed": attention.answer(int(a["id"]), a["value"])}
     return {"closed": attention.resolve(int(a["id"]), a.get("status") or "skipped")}
 
 

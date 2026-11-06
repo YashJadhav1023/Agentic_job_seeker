@@ -115,3 +115,20 @@ def test_wait_for_login_asks_user_when_session_expired(monkeypatch):
             pass
     asyncio.run(g.wait_for_login(P(), "https://www.naukri.com/mnjuser/homepage", lambda u: "mnjuser" in u))
     assert calls == [("Naukri", "login")]
+
+
+def test_wait_for_human_stops_when_done_but_never_clear(monkeypatch):
+    import attention
+    g = _guard(monkeypatch)
+    monkeypatch.setenv("DISPLAY", ":99")
+    monkeypatch.setattr(attention, "available", lambda profile=None: True)
+    monkeypatch.setattr(attention, "request", lambda *a, **k: 7)
+    monkeypatch.setattr(attention, "get", lambda rid: {"status": "done", "expires": 9e12})
+    monkeypatch.setattr(attention, "resolve", lambda rid, st="done": False)
+
+    async def never_clear():
+        return False
+
+    async def go():
+        return await asyncio.wait_for(g.wait_for_human(_Page(), "Naukri", "human_check", "check box", never_clear, poll=0), 2)
+    assert asyncio.run(go()) is True

@@ -872,12 +872,14 @@ def _reach_form(ctx, page, job: dict, res: dict, check_title: bool = True):
     return page, scope, descs
 
 
-def apply_one(ctx, job: dict, F: dict, dry: bool, ask=None, shot_dir: Path = SHOTS, step_pause_ms: int = 700, human=None) -> dict:
+def apply_one(ctx, job: dict, F: dict, dry: bool, ask=None, shot_dir: Path = SHOTS, step_pause_ms: int = 700, human=None,
+              account=None) -> dict:
     """Try to apply to one job. Never raises. Result: {status, reason, filled, steps, screenshot}.
 
     status: applied | dry_filled | unconfirmed | unresolved | captcha | login | no_form | error
     human(page, kind, reason) -> bool: hand a login wall / CAPTCHA to the user (see attention.py) and wait; True = the user
     finished it and the run continues on the same page. None = stop at such pages, as before.
+    account(page) -> 'ok' | 'captcha' | 'failed' | 'skipped': sign up / sign in by itself first (account_step.py).
     """
     res = {"job_id": job.get("id"), "url": job.get("url"), "status": "error", "reason": "", "filled": 0, "steps": 0, "screenshot": ""}
     page = None
@@ -892,6 +894,24 @@ def apply_one(ctx, job: dict, F: dict, dry: bool, ask=None, shot_dir: Path = SHO
             return bool(human(page, kind, reason))
         except Exception:  # noqa: BLE001 - help that fails is no help; the job just stops as before
             return False
+
+    def own_account() -> str:
+        if account is None:
+            return "failed"
+        try:
+            return account(page) or "failed"
+        except Exception:  # noqa: BLE001 - a broken sign-up page falls back to the user
+            return "failed"
+
+    def past_login(reason: str):
+        """-> 'account' (the bot got past it), 'human' (the user did), or None."""
+        st = own_account()
+        if st == "ok":
+            return "account"
+        if st == "captcha" and hand_over("human_check", "CAPTCHA on the sign-up / sign-in page"):
+            if own_account() == "ok":
+                return "account"
+        return "human" if hand_over("login", reason) else None
     try:
         page = ctx.new_page()
         opened_pages.add(page)
@@ -902,8 +922,8 @@ def apply_one(ctx, job: dict, F: dict, dry: bool, ask=None, shot_dir: Path = SHO
         if page not in opened_pages:
             opened_pages.add(page)
         if scope is None and res["status"] in ("login", "captcha"):
-            kind = "login" if res["status"] == "login" else "human_check"
-            if hand_over(kind, res["reason"]):
+            ok = past_login(res["reason"]) if res["status"] == "login" else hand_over("human_check", res["reason"])
+            if ok:
                 settle(page)
                 _dismiss_cookies(page)
                 res.update(status="error", reason="")
@@ -922,7 +942,16 @@ def apply_one(ctx, job: dict, F: dict, dry: bool, ask=None, shot_dir: Path = SHO
                 res.update(status="captcha", reason="CAPTCHA on the form")
                 return res
             if b["password"]:
-                if hand_over("login", "the form asks to create an account / log in"):
+                how = past_login("the form asks to create an account / log in")
+                if how == "account":  # the bot signed up / in: the page moved on, find the form again
+                    res.update(status="error", reason="")
+                    page, scope, descs = _reach_form(ctx, page, job, res, check_title=False)
+                    if page not in opened_pages:
+                        opened_pages.add(page)
+                    if scope is None:
+                        return res
+                    continue
+                if how == "human":
                     settle(page)
                     scope = _find_form(page)[0] or scope
                     continue
@@ -1023,6 +1052,23 @@ def launch(p, headless: bool = True):
     return p.chromium.launch(headless=headless, args=["--disable-blink-features=AutomationControlled"], **kw)
 
 
+def make_account(profile: dict, F: dict, job: dict):
+    """account() for apply_one: sign up / sign in on the career site by itself (account_step.py). The phone/email code
+    is read from Gmail, or asked in the app; the job label goes into that request."""
+    import account_step
+    import attention
+    import verify_mail
+    from urllib.parse import urlparse
+    label = " @ ".join(x for x in (job.get("title", ""), job.get("company", "")) if x)
+
+    def account(page):
+        return account_step.run(
+            page, F, (urlparse(page.url).hostname or ""), False,
+            ask_value=lambda kind, site, url, reason: attention.ask_value(kind, site, url, reason, job=label, profile=profile),
+            wait_mail=lambda host, since: verify_mail.wait_for(profile, host, since))
+    return account
+
+
 def make_human(profile: dict, job: dict):
     """human() for apply_one: notify the user and wait in the visible browser (attention.py). None when unavailable."""
     import attention
@@ -1090,7 +1136,8 @@ def run_batch(profile: dict, jobs: list, dry: bool, emit=print, pause=(6, 14)) -
                 ctx.set_default_navigation_timeout(45000)
                 try:
                     Fj = {**F, "cover_note": tailored_cover(F, j)}
-                    r = apply_one(ctx, j, Fj, dry, make_asker(Fj, j), human=make_human(profile, j) if headed else None)
+                    r = apply_one(ctx, j, Fj, dry, make_asker(Fj, j), human=make_human(profile, j) if headed else None,
+                                  account=None if dry else make_account(profile, Fj, j))
                 finally:
                     if shared is None:
                         try:

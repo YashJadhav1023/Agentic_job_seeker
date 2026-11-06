@@ -39,16 +39,24 @@ def multi_board_search(a: dict, scrape=None) -> dict:
     term = a.get("query") or p["search"]["keywords"][0]
     location = a.get("location") or p["search"]["locations"][0]
     limit = max(1, min(int(a.get("limit", 20)), 50))
-    kw = dict(site_name=sites, search_term=term, location=location, results_wanted=limit,
-              hours_old=int(a.get("hours_old", 72)), country_indeed="India",
-              linkedin_fetch_description=bool(a.get("fetch_description", False)))
+    kw = dict(search_term=term, location=location, results_wanted=limit,
+              hours_old=int(a.get("hours_old", 72)), country_indeed="India")
     if "google" in sites:
         kw["google_search_term"] = f"{term} jobs near {location} since yesterday"
+    describe = bool(a.get("fetch_description", False))
+    # Naukri answers 406 "rate limited" to the per-job page JobSpy fetches for a description, so Naukri is
+    # searched without descriptions; the other boards still get them when asked.
+    batches = [(sites, describe)]
+    if describe and "naukri" in sites:
+        others = [s for s in sites if s != "naukri"]
+        batches = ([(others, True)] if others else []) + [(["naukri"], False)]
+    rows = []
     try:
-        df = scrape(**kw)
+        for batch, fetch in batches:
+            df = scrape(site_name=batch, linkedin_fetch_description=fetch, **kw)
+            rows += df.to_dict("records") if hasattr(df, "to_dict") else list(df)
     except Exception as e:  # noqa: BLE001 - surface board errors to the caller
         return {"error": f"jobspy failed: {type(e).__name__}: {str(e)[:300]}"}
-    rows = df.to_dict("records") if hasattr(df, "to_dict") else list(df)
     jobs, skipped, saved = [], 0, 0
     for r in rows:
         title = str(r.get("title") or "")

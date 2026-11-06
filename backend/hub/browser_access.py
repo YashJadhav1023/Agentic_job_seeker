@@ -61,8 +61,10 @@ def use_ticket(t: str):
 
 
 def vnc_url(password: str) -> str:
-    """noVNC address with the VNC password in the URL *fragment*, which browsers never send to any server or log."""
-    base = "/browser/vnc.html?path=browser/websockify&autoconnect=1&resize=scale"
+    """noVNC address with the VNC password in the URL *fragment*, which browsers never send to any server or log.
+    reconnect: a phone browser drops the websocket when it goes to the background (e.g. to read an SMS code); noVNC
+    reconnects by itself when it comes back instead of staying on "Disconnected"."""
+    base = "/browser/vnc.html?path=browser/websockify&autoconnect=1&resize=scale&reconnect=1&reconnect_delay=2000"
     return base + (f"#password={password}" if password else "")
 
 

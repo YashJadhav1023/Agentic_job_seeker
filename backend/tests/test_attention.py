@@ -186,3 +186,11 @@ def test_list_hides_value_and_flags_needs_value(sent):
     assert [r["needs_value"] for i, r in rows.items() if i != rid] == [False]
     assert server.attention_resolve({"id": rid, "value": "777"}) == {"closed": True}
     assert attention.get(rid)["value"] == "777"
+
+
+def test_remote_browser_reconnects_after_the_phone_backgrounds_it():
+    import browser_access
+    url = browser_access.vnc_url("pw")
+    query, _, fragment = url.partition("#")
+    assert "reconnect=1" in query and "reconnect_delay=2000" in query
+    assert fragment == "password=pw" and "pw" not in query

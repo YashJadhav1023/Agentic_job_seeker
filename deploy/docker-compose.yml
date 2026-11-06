@@ -14,7 +14,7 @@ services:
       JOBHUB_TRUST_PROXY: "1"
       JOBHUB_MAX_PARALLEL: "${JOBHUB_MAX_PARALLEL:-6}"   # 6 parallel runs with Moli (~40MB RAM/run)
       JOBHUB_OLLAMA_URL: "http://ollama:11434"
-      JOBHUB_REMOTE_BROWSER_URL: "https://${JOBHUB_DOMAIN}/browser/vnc.html?path=browser/websockify&autoconnect=1&resize=scale"
+      JOBHUB_REMOTE_BROWSER_URL: "https://${JOBHUB_DOMAIN}/browser/vnc.html?path=browser/websockify&autoconnect=1&resize=scale&reconnect=1&reconnect_delay=2000"
     volumes:
       - jobhub-data:/app/data          # profile.yaml, hub.db, resume.pdf, STOP switch
       - jobhub-runs:/app/runs          # background run logs

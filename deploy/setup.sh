@@ -39,7 +39,7 @@ cat <<EOF
   API token      : $TOKEN
 
 Remote browser (for logging in to LinkedIn/Naukri/Indeed):
-  URL            : https://$DOMAIN/browser/vnc.html?path=browser/websockify&autoconnect=1&resize=scale
+  URL            : https://$DOMAIN/browser/vnc.html?path=browser/websockify&autoconnect=1&resize=scale&reconnect=1&reconnect_delay=2000
   Basic-auth     : jobhub / $BROWSER_PW
   VNC password   : $VNC_PW
 

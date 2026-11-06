@@ -20,7 +20,10 @@ import core  # noqa: E402
 import keys  # noqa: E402
 import llm  # noqa: E402
 
-API = "https://r.jina.ai"
+FIRECRAWL_API = "https://api.firecrawl.dev/v2"
+JINA_API = "https://r.jina.ai"
+API = JINA_API
+
 CAREER_RX = re.compile(r"/(careers?|jobs?|join-us|work-with-us|openings?|opportunities)(/|$|\?)", re.I)
 SCHEMA = {
     "type": "object",
@@ -41,7 +44,49 @@ FirecrawlUnavailable = ScannerUnavailable
 OutOfCredits = ScannerUnavailable  # kept for backward compatibility
 
 
+def _default_post(path: str, body: dict, timeout: int = 90) -> dict:
+    key = keys.get("firecrawl")
+    if not key:
+        raise FirecrawlUnavailable("JOBHUB_FIRECRAWL_API_KEY is not set")
+    cooling = keys.failed("firecrawl")
+    if cooling:
+        raise FirecrawlUnavailable(cooling)
+    for attempt in range(3):
+        r = requests.post(FIRECRAWL_API + path, json=body, headers={"Authorization": f"Bearer {key}"}, timeout=timeout)
+        kind = keys.classify(r.status_code, r.text[:300] if r.status_code >= 400 else "")
+        if kind:
+            keys.mark_failed("firecrawl", kind)
+            raise FirecrawlUnavailable(keys.failed("firecrawl") or kind)
+        if r.status_code == 429 or r.status_code >= 500:
+            if attempt == 2:
+                raise FirecrawlUnavailable(f"Firecrawl busy (HTTP {r.status_code})")
+            time.sleep(min(int(r.headers.get("Retry-After", 0) or 0) or 5 * (attempt + 1), 30))
+            continue
+        r.raise_for_status()
+        return r.json()
+    raise FirecrawlUnavailable("Firecrawl unavailable")
+
+
+_post = _default_post
+
+
+def _is_post_mocked() -> bool:
+    return _post is not _default_post
+
+
+def scanner_provider() -> str:
+    if _is_post_mocked():
+        return "firecrawl"
+    if keys.get("jina"):
+        return "jina"
+    if keys.get("firecrawl"):
+        return "firecrawl"
+    return "jina"
+
+
 def api_key() -> str:
+    if _is_post_mocked():
+        return keys.get("firecrawl") or "mocked"
     return keys.get("jina") or keys.get("firecrawl")
 
 
@@ -57,7 +102,7 @@ def _get(target_url: str, json_format: bool = False, timeout: int = 40):
     if cooling:
         raise ScannerUnavailable(cooling)
 
-    url = f"{API}/{target_url}" if not target_url.startswith(API) else target_url
+    url = f"{JINA_API}/{target_url}" if not target_url.startswith(JINA_API) else target_url
     for attempt in range(3):
         try:
             r = requests.get(url, headers=headers, timeout=timeout)
@@ -82,6 +127,12 @@ def _get(target_url: str, json_format: bool = False, timeout: int = 40):
 
 
 def find_career_url(domain: str) -> str:
+    if scanner_provider() == "firecrawl":
+        data = _post("/map", {"url": f"https://{domain}", "search": "careers jobs openings", "limit": 15})
+        urls = [(item.get("url") if isinstance(item, dict) else item) for item in (data.get("links") or [])]
+        urls = [u for u in urls if u and CAREER_RX.search(u)]
+        return min(urls, key=len) if urls else ""
+
     target = f"https://{domain}" if not domain.startswith("http") else domain
     try:
         data = _get(target, json_format=True)
@@ -116,6 +167,12 @@ def find_career_url(domain: str) -> str:
 
 
 def extract_jobs(url: str) -> list:
+    if scanner_provider() == "firecrawl":
+        data = _post("/scrape", {"url": url, "onlyMainContent": True, "timeout": 60000, "formats": [
+            {"type": "json", "schema": SCHEMA,
+             "prompt": "List every open job on this page with its title, location, absolute link and a short description."}]})
+        return (((data.get("data") or {}).get("json")) or {}).get("jobs") or []
+
     try:
         markdown = _get(url, json_format=False)
     except Exception:
@@ -185,10 +242,20 @@ def default_companies(limit: int) -> list:
 
 
 def run(opts: dict) -> dict:
-    if not api_key():
-        return {"error": "JOBHUB_JINA_API_KEY is not set"}
-    if keys.failed("jina"):
-        return {"error": keys.failed("jina")}
+    prov = scanner_provider()
+    if prov == "firecrawl":
+        if not keys.get("firecrawl") and not _is_post_mocked():
+            return {"error": "JOBHUB_FIRECRAWL_API_KEY is not set"}
+        if keys.failed("firecrawl"):
+            return {"error": keys.failed("firecrawl")}
+    else:
+        if not api_key():
+            return {"error": "JOBHUB_FIRECRAWL_API_KEY is not set" if not keys.get("firecrawl") and not keys.get("jina") else "JOBHUB_JINA_API_KEY is not set"}
+        if keys.get("jina") and keys.failed("jina"):
+            return {"error": keys.failed("jina")}
+        elif keys.failed("firecrawl"):
+            return {"error": keys.failed("firecrawl")}
+
     p = core.load_profile()
     limit = int(opts.get("limit", 10))
     companies = opts.get("companies") or default_companies(limit)
@@ -199,7 +266,7 @@ def run(opts: dict) -> dict:
             out["scanned"] += 1
             out["saved"] += n
             print(f"[career] {name}: {n} new jobs", flush=True)
-        except ScannerUnavailable as e:
+        except (ScannerUnavailable, FirecrawlUnavailable) as e:
             print(f"[career] stopped: {keys.redact(e)}", flush=True)
             out["stopped"] = keys.redact(e)
             break

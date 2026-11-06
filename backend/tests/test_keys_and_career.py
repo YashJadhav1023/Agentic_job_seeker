@@ -1,6 +1,7 @@
 """API keys (keys.py + its users), the 100-email limit, Naukri confirmation helpers, and career-form selection/caps."""
 import importlib.util
 import json
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -43,6 +44,7 @@ def test_env_beats_secret_file_and_second_env_name_works(monkeypatch):
     assert keys.get("firecrawl") == "fc-primary12345"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file permission checks not supported on Windows")
 def test_secret_file_with_loose_permissions_is_refused():
     f = core.SECRETS / "kiro_api_key"
     f.write_text("ksk_looseperms1234")

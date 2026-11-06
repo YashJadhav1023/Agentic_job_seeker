@@ -40,9 +40,12 @@ def test_scan_saves_only_relevant_external_jobs(monkeypatch, profile):
     assert career_scan.scan_company(profile, "acme.com") == 0  # same jobs are not saved twice
 
 
-def test_run_needs_a_key(monkeypatch):
+def test_run_needs_a_key(monkeypatch, tmp_path):
     monkeypatch.delenv("JOBHUB_FIRECRAWL_API_KEY", raising=False)
     monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
+    monkeypatch.delenv("JOBHUB_JINA_API_KEY", raising=False)
+    monkeypatch.delenv("JINA_API_KEY", raising=False)
+    monkeypatch.setattr(core, "SECRETS", tmp_path / "secrets")
     assert "error" in career_scan.run({"companies": ["acme.com"]})
 
 

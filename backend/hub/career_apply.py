@@ -487,6 +487,34 @@ def decide(d: dict, F: dict, job: dict, ask=None) -> tuple:
     return ("fill", ans[: d["maxlength"]] if d.get("maxlength") else ans, "saved answer")
 
 
+MAX_USER_QUESTIONS = 3  # per job: the user answers in the app while the form waits
+
+
+def _ask_missing(descs: list, F: dict, job: dict, ask_user, budget: dict, ask=None) -> int:
+    """Required fields the profile, saved answers and the LLM cannot fill: ask the user (app), remember the answers
+    (form_qa) and put them into F["qa"] so the next plan fills them. -> how many were answered.
+    ask_user(question, options) -> str | None. A reply to a choice must match one of its options."""
+    import form_qa
+    n = 0
+    for d in descs:
+        if budget["left"] <= 0:
+            break
+        if d["kind"] in ("file", "checkbox") or not d.get("required") or decide(d, F, job, ask)[0] != "unresolved":
+            continue
+        label = (d.get("label") or d.get("name") or "").split("|")[0].strip()
+        if len(form_qa.key(label)) < 3:
+            continue
+        opts = [o.get("text", "") for o in d.get("options") or [] if not o.get("placeholder")]
+        budget["left"] -= 1
+        reply = str(ask_user(label, opts) or "").strip()
+        if not reply or (d.get("options") and pick_option(d["options"], [reply]) is None):
+            continue
+        form_qa.remember(label, reply, job.get("company", ""))
+        F.setdefault("qa", {})[form_qa.key(label)] = reply
+        n += 1
+    return n
+
+
 def tailored_cover(F: dict, job: dict) -> str:
     """Cover note for this job: the profile note plus the candidate's own skills that this JD asks for (never others)."""
     jd = norm(f"{job.get('title', '')} {job.get('description', '')}")
@@ -873,18 +901,20 @@ def _reach_form(ctx, page, job: dict, res: dict, check_title: bool = True):
 
 
 def apply_one(ctx, job: dict, F: dict, dry: bool, ask=None, shot_dir: Path = SHOTS, step_pause_ms: int = 700, human=None,
-              account=None) -> dict:
+              account=None, ask_user=None) -> dict:
     """Try to apply to one job. Never raises. Result: {status, reason, filled, steps, screenshot}.
 
     status: applied | dry_filled | unconfirmed | unresolved | captcha | login | no_form | error
     human(page, kind, reason) -> bool: hand a login wall / CAPTCHA to the user (see attention.py) and wait; True = the user
     finished it and the run continues on the same page. None = stop at such pages, as before.
     account(page) -> 'ok' | 'captcha' | 'failed' | 'skipped': sign up / sign in by itself first (account_step.py).
+    ask_user(question, options) -> str | None: a required question nothing else can answer is asked in the app.
     """
     res = {"job_id": job.get("id"), "url": job.get("url"), "status": "error", "reason": "", "filled": 0, "steps": 0, "screenshot": ""}
     page = None
     asked = set()
     opened_pages = set()
+    budget = {"left": MAX_USER_QUESTIONS}
 
     def hand_over(kind: str, reason: str) -> bool:
         if human is None or kind in asked:
@@ -966,6 +996,8 @@ def apply_one(ctx, job: dict, F: dict, dry: bool, ask=None, shot_dir: Path = SHO
                 elif act != "skip":
                     plan.append((d, act, val))
             if bad:
+                if ask_user is not None and _ask_missing(descs, F, job, ask_user, budget, ask):
+                    continue  # the user answered in the app: plan this step again with the answers
                 try:
                     import form_qa
                     for d in descs:
@@ -1069,6 +1101,18 @@ def make_account(profile: dict, F: dict, job: dict):
     return account
 
 
+def make_user_asker(profile: dict, job: dict):
+    """ask_user() for apply_one: the question (and its options) appears in the app; the form waits for the answer."""
+    import attention
+    label = " @ ".join(x for x in (job.get("title", ""), job.get("company", "")) if x)
+    site = job.get("company") or "A company"
+
+    def ask_user(question, options):
+        reason = question + (f" Options: {' / '.join(options)}" if options else "")
+        return attention.ask_value("question", site, job.get("url", ""), reason, job=label, profile=profile)
+    return ask_user
+
+
 def make_human(profile: dict, job: dict):
     """human() for apply_one: notify the user and wait in the visible browser (attention.py). None when unavailable."""
     import attention
@@ -1137,7 +1181,8 @@ def run_batch(profile: dict, jobs: list, dry: bool, emit=print, pause=(6, 14)) -
                 try:
                     Fj = {**F, "cover_note": tailored_cover(F, j)}
                     r = apply_one(ctx, j, Fj, dry, make_asker(Fj, j), human=make_human(profile, j) if headed else None,
-                                  account=None if dry else make_account(profile, Fj, j))
+                                  account=None if dry else make_account(profile, Fj, j),
+                                  ask_user=None if dry else make_user_asker(profile, j))
                 finally:
                     if shared is None:
                         try:

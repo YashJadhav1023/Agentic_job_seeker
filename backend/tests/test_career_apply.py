@@ -450,3 +450,80 @@ def test_make_human_only_when_help_is_available(monkeypatch):
             pass
     h = ca.make_human({}, {"title": "SRE", "company": "Kyndryl"})
     assert h(Pg(), "login", "needs an account") and calls == [("login", "Workday")]
+
+
+# ---------------------------------------------------------------- missing details: profile first, then the user, then remembered
+class AskUser:
+    def __init__(self, *replies):
+        self.replies, self.asked = list(replies), []
+
+    def __call__(self, question, options):
+        self.asked.append((question, options))
+        return self.replies.pop(0) if self.replies else None
+
+
+def test_missing_detail_is_asked_saved_and_reused(F):
+    import form_qa
+    Fx = dict(F, notice_days=None, qa={})
+    d = field("Notice period (days)")
+    assert ca.decide(d, Fx, {})[0] == "unresolved"
+    ask = AskUser("30")
+    assert ca._ask_missing([d], Fx, {"company": "Acme"}, ask, budget={"left": 3}) == 1
+    assert ask.asked == [("Notice period (days)", [])]
+    assert ca.decide(d, Fx, {})[:2] == ("fill", "30")
+    assert form_qa.answers()[form_qa.key("Notice period (days)")] == "30"
+
+
+def test_choice_reply_must_match_an_option(F):
+    d = field("Are you willing to work night shifts?", "select", options=SEL_YESNO)
+    Fx = dict(F, qa={})
+    ask = AskUser("yes")
+    assert ca._ask_missing([d], Fx, {}, ask, budget={"left": 3}) == 1
+    assert ask.asked == [("Are you willing to work night shifts?", ["Yes", "No"])]
+    assert ca.decide(d, Fx, {})[:2] == ("select", 1)
+    bad = AskUser("maybe")
+    Fy = dict(F, qa={})
+    assert ca._ask_missing([d], Fy, {}, bad, budget={"left": 3}) == 0 and Fy["qa"] == {}
+
+
+def test_profile_answers_are_not_asked_and_questions_are_capped(F):
+    known = field("First name *")
+    unknown = [field(f"Unusual question {n}?") for n in range(4)]
+    Fx = dict(F, qa={})
+    ask = AskUser("a", "b", "c", "d")
+    budget = {"left": 3}
+    assert ca._ask_missing([known] + unknown, Fx, {}, ask, budget=budget) == 3
+    assert [q for q, _ in ask.asked] == ["Unusual question 0?", "Unusual question 1?", "Unusual question 2?"]
+    assert budget["left"] == 0
+    assert ca._ask_missing(unknown, Fx, {}, ask, budget=budget) == 0
+
+
+def test_remember_updates_a_question_seen_before():
+    import form_qa
+    form_qa.record_unanswered("Notice period (days)", [], "Acme")
+    form_qa.remember("Notice period (days)", "45", "Acme")
+    rows = [r for r in form_qa.all_questions() if r["qkey"] == form_qa.key("Notice period (days)")]
+    assert len(rows) == 1 and rows[0]["answer"] == "45"
+
+
+def test_unknown_question_is_answered_by_the_user_then_applies(browser, site, F, tmp_path):
+    ask_user = AskUser("A disk filled up; I added alerts and log rotation.")
+    ctx = browser.new_context()
+    ctx.set_default_timeout(8000)
+    try:
+        r = ca.apply_one(ctx, {"id": 11, "url": site + "/extra.html", "title": "DevOps Engineer", "company": "Acme"},
+                         dict(F, qa={}), False, None, shot_dir=tmp_path / "s", step_pause_ms=50, ask_user=ask_user)
+    finally:
+        ctx.close()
+    assert r["status"] == "applied", r
+    assert [q for q, _ in ask_user.asked] == ["Describe your biggest outage *"]
+
+
+def test_make_user_asker_sends_the_question_and_options_to_the_app(monkeypatch):
+    import attention
+    seen = []
+    monkeypatch.setattr(attention, "ask_value", lambda kind, site, url, reason, job="", profile=None, **k:
+                        seen.append((kind, site, url, reason, job)) or "Yes")
+    ask_user = ca.make_user_asker({"p": 1}, {"title": "SRE", "company": "Acme", "url": "https://jobs.acme.com/1"})
+    assert ask_user("Willing to work night shifts?", ["Yes", "No"]) == "Yes"
+    assert seen == [("question", "Acme", "https://jobs.acme.com/1", "Willing to work night shifts? Options: Yes / No", "SRE @ Acme")]

@@ -76,3 +76,14 @@ def save_answer(qid: int, answer: str) -> bool:
         raise ValueError("answer is empty")
     with _db() as c:
         return bool(c.execute("UPDATE form_qa SET answer=?, answered_at=? WHERE id=?", (answer, core.now_iso(), qid)).rowcount)
+
+
+def remember(question: str, answer: str, company: str = "") -> None:
+    """Save an answer the user typed while a form was waiting (the question may or may not have been seen before)."""
+    k, answer = key(question), str(answer or "").strip()[:1000]
+    if len(k) < 3 or not answer:
+        return
+    with _db() as c:
+        if not c.execute("UPDATE form_qa SET answer=?, answered_at=? WHERE qkey=?", (answer, core.now_iso(), k)).rowcount:
+            c.execute("INSERT INTO form_qa(qkey,question,options,answer,company,asked_at,answered_at) VALUES(?,?,?,?,?,?,?)",
+                      (k, str(question)[:300], "[]", answer, str(company)[:120], core.now_iso(), core.now_iso()))

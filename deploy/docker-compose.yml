@@ -103,9 +103,9 @@ services:
   # Connects to yash.j.devops@gmail.com for SMTP outreach and uses Ollama/Cloud LLM for recruiter classification
   mailflare:
     profiles: ["mailflare"]
-    build:
-      context: https://github.com/hieunc229/mailflare.git#main
-    image: mailflare:latest
+    # Built by CI (.github/workflows/ci.yml, job mailflare) from upstream hieunc229/mailflare at this commit; the
+    # server only pulls it. Bump the commit here to update.
+    image: ghcr.io/yashjadhav1023/mailflare:be1343b7cf938030450ba05a92c90227ffa51aba
     restart: unless-stopped
     env_file: .env
     environment:

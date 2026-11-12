@@ -45,6 +45,45 @@ jobs:
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/health && exit 0; sleep 2; done
           docker logs ajs; exit 1
 
+  mailflare:
+    # Mailflare's Next.js build needs ~7 GB of build cache, more than the 30 GB server can spare, so it is built here
+    # on a native arm64 runner (the server is Graviton) and pushed to GHCR; the server only pulls it. The upstream
+    # commit is the image tag in deploy/docker-compose.yml (one place to bump it).
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Upstream commit from docker-compose.yml
+        id: ref
+        run: |
+          REF=$(grep -oE 'ghcr.io/yashjadhav1023/mailflare:[0-9a-f]{40}' deploy/docker-compose.yml | head -1 | cut -d: -f2)
+          test -n "$REF" || { echo "::error::no pinned mailflare image in deploy/docker-compose.yml"; exit 1; }
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Already built?
+        id: have
+        env:
+          IMAGE: ghcr.io/yashjadhav1023/mailflare:${{ steps.ref.outputs.ref }}
+        run: if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then echo "yes=1" >> "$GITHUB_OUTPUT"; fi
+      - uses: docker/setup-buildx-action@v3
+        if: steps.have.outputs.yes != '1'
+      - name: Build and push
+        if: steps.have.outputs.yes != '1'
+        uses: docker/build-push-action@v6
+        with:
+          context: https://github.com/hieunc229/mailflare.git#${{ steps.ref.outputs.ref }}
+          platforms: linux/arm64
+          push: true
+          tags: ghcr.io/yashjadhav1023/mailflare:${{ steps.ref.outputs.ref }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
   android:
     runs-on: ubuntu-latest
     permissions:

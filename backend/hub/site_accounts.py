@@ -63,18 +63,27 @@ def _password(simple: bool) -> str:
 
 
 def get(host: str) -> dict | None:
-    """-> {"email", "password", "created"} or None."""
-    return _load().get(_key(host))
+    """-> {"email", "password", "created"} or None. A pending password (sign-up not confirmed) is not returned."""
+    acct = _load().get(_key(host))
+    return None if not acct or acct.get("pending") else acct
 
 
-def create(host: str, email: str, simple: bool = False) -> str:
+def create(host: str, email: str, simple: bool = False, pending: bool = False) -> str:
     """New password for `host` (saved before it is typed anywhere). simple=True: letters and digits only, 14 chars,
-    for sites that reject symbols."""
+    for sites that reject symbols. pending=True: kept, but get() ignores it until confirm() (the sign-up went through)."""
     data = _load()
     pw = _password(simple)
-    data[_key(host)] = {"email": email, "password": pw, "created": core.now_iso()}
+    data[_key(host)] = {"email": email, "password": pw, "created": core.now_iso(), **({"pending": True} if pending else {})}
     _save(data)
     return pw
+
+
+def confirm(host: str) -> None:
+    """The site accepted the sign-up: later runs sign in with this password."""
+    data = _load()
+    acct = data.get(_key(host))
+    if acct and acct.pop("pending", None):
+        _save(data)
 
 
 def hosts() -> list:

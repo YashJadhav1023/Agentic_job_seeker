@@ -28,6 +28,7 @@ SIGNUP = """<!doctype html><title>{title}</title><h1>{title}</h1><p>Create an ac
  <input type=checkbox id=mkt><label for=mkt>Send me job alerts and newsletters</label>
  {extra}<p id=err></p><button type=submit>Create Account</button></form>"""
 STRICT = ("if (/[^A-Za-z0-9]/.test(pw.value)) { err.textContent = 'Password must not contain special characters'; return; }")
+EXISTS = "err.textContent = 'An account with this email already exists'; return;"
 VERIFY = """<!doctype html><title>Verify</title><h1>Verify your email</h1><p>Enter the verification code we sent you.</p>
 <label for=code>Verification code</label><input id=code name=verificationCode>
 <button onclick="sessionStorage.setItem('code', code.value); location.href='/done.html'">Verify</button>"""
@@ -51,6 +52,7 @@ def _pages():
             "/jobsignup.html": SIGNUP.format(title="DevOps Engineer", check="", next="/verify.html", extra=""),
             "/strict.html": SIGNUP.format(title="Create your account", check=STRICT, next="/done.html", extra=""),
             "/captcha.html": SIGNUP.format(title="Create your account", check="", next="/done.html", extra=CAPTCHA_EXTRA),
+            "/exists.html": SIGNUP.format(title="Create your account", check=EXISTS, next="/done.html", extra=""),
             "/verify.html": VERIFY, "/done.html": DONE, "/login.html": LOGIN, "/apply.html": APPLY}
 
 
@@ -179,6 +181,13 @@ def test_captcha_goes_to_the_user_and_nothing_is_submitted(page, site):
     _go(page, base + "/captcha.html")
     st = account_step.run(page, F, "127.0.0.1", False, ask_value=Asked(), wait_mail=lambda *a, **k: {})
     assert st == "captcha" and _stored(page, "signup") is None and site_accounts.get("127.0.0.1") is None
+
+
+def test_existing_account_leaves_no_password_to_sign_in_with(page, site):
+    base, _ = site
+    _go(page, base + "/exists.html")
+    st = account_step.run(page, F, "127.0.0.1", False, ask_value=Asked(), wait_mail=lambda *a, **k: {})
+    assert st == "failed" and site_accounts.get("127.0.0.1") is None
 
 
 def test_dry_run_and_job_boards_are_skipped(page, site):

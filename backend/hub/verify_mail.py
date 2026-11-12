@@ -17,6 +17,30 @@ LINK_RX = re.compile(r"https://[^\s\"'<>]+")
 ACTION_RX = re.compile(r"verif|confirm|activat|token", re.I)
 SECOND_LEVEL = {"co", "com", "org", "net", "ac", "gov", "edu"}
 BOXES = ("INBOX", "[Gmail]/Spam")
+# ATS sites whose mail comes from another domain of the same vendor (site -> sender domains)
+ATS_SENDERS = {"myworkdayjobs.com": {"myworkday.com", "workday.com"}, "icims.com": {"icims.com"},
+               "successfactors.com": {"successfactors.com", "sap.com"}, "taleo.net": {"taleo.net", "oracle.com"}}
+GENERIC_LABEL_RX = re.compile(r"^(www|careers?|jobs?|apply|boards?|login|my|hr|recruit\w*|talent|portal|app|en|wd\d+|\d+)$", re.I)
+
+
+def _sender_site(sender: str) -> str:
+    m = re.search(r"@([\w.-]+)", sender or "")
+    return _site(m.group(1)) if m else ""
+
+
+def _names(host: str) -> set:
+    """Company words in the host: acme.wd5.myworkdayjobs.com -> {acme}, careers.acme.co.in -> {acme}."""
+    labels = (host or "").lower().split(".")[:-1]
+    return {w for lab in labels for w in re.split(r"[-_]", lab) if len(w) >= 3 and not GENERIC_LABEL_RX.match(w)
+            and w not in SECOND_LEVEL and w not in {s.split(".")[0] for s in ATS_SENDERS}}
+
+
+def _from_site(sender: str, text: str, host: str) -> bool:
+    """The mail is this site's: sent from its domain (or its ATS vendor's), or it names the company."""
+    site, frm = _site(host), _sender_site(sender)
+    if frm and (frm == site or frm in ATS_SENDERS.get(site, ())):
+        return True
+    return any(re.search(rf"\b{re.escape(n)}\b", text, re.I) for n in _names(host))
 
 
 def _site(host: str) -> str:
@@ -27,11 +51,13 @@ def _site(host: str) -> str:
     return ".".join(parts[-2:])
 
 
-def extract(subject: str, body: str, host: str) -> dict:
+def extract(subject: str, body: str, host: str, sender: str = "") -> dict:
     """-> {"code": str|None, "link": str|None}. A link counts only on the site's own domain and when it looks like a
-    verification action; a number counts only next to a word like code / OTP / verification."""
+    verification action; a number counts only next to a word like code / OTP / verification, and only in a mail from
+    the site (its domain or ATS vendor) or naming the company, so another site's or a bank's OTP is never typed in."""
     text = f"{subject}\n{body}"
-    m = CODE_RX.search(re.sub(r"<[^>]+>", " ", text))
+    plain = re.sub(r"<[^>]+>", " ", text)
+    m = CODE_RX.search(plain) if _from_site(sender, plain, host) else None
     site, link = _site(host), None
     for url in LINK_RX.findall(text):
         url = url.rstrip(".,;)")
@@ -77,7 +103,7 @@ def _scan(m, host: str, since: float) -> dict:
             msg = emaillib.message_from_bytes(msg_data[0][1])
             if _sent_at(msg) < since - 60:  # older than this sign-up (one minute of clock skew allowed)
                 continue
-            got = extract(_decode_str(msg.get("Subject", "")), _body(msg), host)
+            got = extract(_decode_str(msg.get("Subject", "")), _body(msg), host, _decode_str(msg.get("From", "")))
             if got["code"] or got["link"]:
                 return got
     return {}

@@ -137,7 +137,7 @@ def _follow_link(page, rx) -> bool:
 def _sign_up(page, F: dict, host: str, log) -> str:
     import career_apply as ca
     sc, fields = _scope(page)
-    pw = site_accounts.create(host, F.get("email", ""))
+    pw = site_accounts.create(host, F.get("email", ""), pending=True)
     for f in fields:
         role = _role(f)
         if role == "password":
@@ -154,15 +154,18 @@ def _sign_up(page, F: dict, host: str, log) -> str:
         sc, fields = _scope(page)
         if sc is None:
             return "failed"
-        pw = site_accounts.create(host, F.get("email", ""), simple=True)
+        pw = site_accounts.create(host, F.get("email", ""), simple=True, pending=True)
         for f in fields:
             if _role(f) == "password":
                 _fill(sc, f, pw)
         _submit(sc, SIGNUP_BTN_RX)
         _settle(page)
         b = _blockers(page)
-    if b["password"] and EXISTS_RX.search(b["body"]):
-        return "failed"  # an account we do not know the password of: the user signs in
+    if b["password"] and (EXISTS_RX.search(b["body"]) or PW_RULE_RX.search(b["body"])):
+        return "failed"  # an account we do not know the password of, or still rejected: the user signs in
+    if b["challenge"]:
+        return "captcha"  # not confirmed: after the user's CAPTCHA the sign-up runs again
+    site_accounts.confirm(host)
     log(f"  🔑 created an account on {host}")
     return "ok"
 

@@ -12,8 +12,25 @@ PROFILE = {"hr_outreach": {"gmail_user": "me@example.com"}}
 
 def test_code_from_workday_style_mail():
     got = verify_mail.extract("Verify your account", "Hello,\nYour verification code is 482913. It expires in 10 minutes.",
-                              "acme.wd5.myworkdayjobs.com")
+                              "acme.wd5.myworkdayjobs.com", sender="Workday <no-reply@myworkday.com>")
     assert got == {"code": "482913", "link": None}
+
+
+def test_code_from_an_unrelated_sender_is_ignored():
+    got = verify_mail.extract("Your OTP", "Your OTP for the transaction is 552211. Do not share it.", "careers.acme.com",
+                              sender="HDFC Bank <alerts@hdfcbank.net>")
+    assert got["code"] is None
+    got = verify_mail.extract("Verify", "Your verification code is 552211", "careers.acme.com", sender="")
+    assert got["code"] is None, "no sender and no company name: not provably this site's code"
+
+
+def test_code_from_the_site_or_naming_the_company_counts():
+    assert verify_mail.extract("Verify", "Your verification code is 7781", "careers.acme.com",
+                               sender="no-reply@mail.acme.com")["code"] == "7781"
+    assert verify_mail.extract("Welcome to Acme Careers", "Your verification code is 7782", "acme.wd5.myworkdayjobs.com",
+                               sender="noreply@sendgrid.example.org")["code"] == "7782"
+    assert verify_mail.extract("Verify", "Your verification code is 7783", "acme.wd5.myworkdayjobs.com",
+                               sender="noreply@sendgrid.example.org")["code"] is None
 
 
 def test_link_from_greenhouse_style_mail():
@@ -101,3 +118,17 @@ def test_wait_for_times_out_with_empty_result(monkeypatch):
     got = verify_mail.wait_for(PROFILE, "acme.com", time.time(), timeout=180, imap_factory=lambda: FakeImap([]),
                                sleep=lambda s: None, now=lambda: next(clock))
     assert got == {}
+
+
+def test_wait_for_skips_another_senders_otp(monkeypatch):
+    monkeypatch.setattr(core, "read_secret", lambda name: "pw")
+    since = time.time() - 5
+    bank = EmailMessage()
+    bank["From"] = "alerts@hdfcbank.net"
+    bank["Subject"] = "OTP"
+    bank["Date"] = format_datetime(datetime.fromtimestamp(since + 3, timezone.utc))
+    bank.set_content("Your OTP is 990011")
+    site = _mail("Verify", "Your verification code is 482913", since + 1)
+    got = verify_mail.wait_for(PROFILE, "acme.wd5.myworkdayjobs.com", since,
+                               imap_factory=lambda: FakeImap([site, bank.as_bytes()]), sleep=lambda s: None)
+    assert got == {"code": "482913", "link": None}

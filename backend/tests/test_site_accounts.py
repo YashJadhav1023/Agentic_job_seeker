@@ -59,3 +59,11 @@ def test_unknown_host_is_none_and_hosts_lists_no_secrets():
 def test_file_is_private(secrets_dir):
     site_accounts.create("a.example.com", "me@example.com")
     assert os.stat(secrets_dir / "site_accounts.json").st_mode & 0o777 == 0o600
+
+
+def test_pending_password_is_kept_but_not_used_until_confirmed():
+    pw = site_accounts.create("careers.acme.com", "me@example.com", pending=True)
+    assert site_accounts.get("careers.acme.com") is None, "a sign-up that did not go through must not be signed in with"
+    site_accounts.confirm("careers.acme.com")
+    assert site_accounts.get("careers.acme.com")["password"] == pw
+    assert "pending" not in site_accounts.get("careers.acme.com")

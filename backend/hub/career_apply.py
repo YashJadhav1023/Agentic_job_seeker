@@ -1134,7 +1134,25 @@ def make_human(profile: dict, job: dict):
     return human
 
 
-def run_batch(profile: dict, jobs: list, dry: bool, emit=print, pause=(6, 14)) -> list:
+def launch_visible(p):
+    """Visible Chromium with the saved career profile (cookies of earlier sign-ins), for the user's help in noVNC."""
+    exe = os.environ.get("JOBHUB_CHROME") or None
+    kw = {"executable_path": exe} if exe else {"channel": "chromium"}
+    (ROOT / ".profiles" / "career").mkdir(parents=True, exist_ok=True)
+    sc = p.chromium.launch_persistent_context(str(ROOT / ".profiles" / "career"), headless=False,
+                                              args=["--disable-blink-features=AutomationControlled"],
+                                              viewport={"width": 1280, "height": 860}, locale="en-IN", **kw)
+    if not sc.pages:
+        sc.new_page()
+    return sc
+
+
+NEEDS_WINDOW = ("captcha", "login")  # results the user can clear only in a visible browser
+
+
+def run_batch(profile: dict, jobs: list, dry: bool, emit=print, pause=(6, 14), launch_fn=launch, visible_fn=launch_visible) -> list:
+    """Every job runs headless first (Moli when available, ~40 MB). A job stopped by a CAPTCHA or a login wall the bot
+    could not get past is retried once in visible Chromium with the user's help; OTPs and questions need no window."""
     from playwright.sync_api import sync_playwright
     import composer
     rt = ""
@@ -1148,58 +1166,64 @@ def run_batch(profile: dict, jobs: list, dry: bool, emit=print, pause=(6, 14)) -
     except Exception:  # noqa: BLE001
         F["qa"] = {}
     results = []
-    headed = make_human(profile, {}) is not None and not dry
-    with sync_playwright() as p:
-        def _get_shared():
-            exe = os.environ.get("JOBHUB_CHROME") or None
-            kw = {"executable_path": exe} if exe else {"channel": "chromium"}
-            (ROOT / ".profiles" / "career").mkdir(parents=True, exist_ok=True)
-            sc = p.chromium.launch_persistent_context(str(ROOT / ".profiles" / "career"), headless=False,
-                                                      args=["--disable-blink-features=AutomationControlled"],
-                                                      viewport={"width": 1280, "height": 860}, locale="en-IN", **kw)
-            if not sc.pages:
-                sc.new_page()
-            return sc
+    can_help = make_human(profile, {}) is not None and not dry
+    retry = []  # indexes into results
 
-        if headed:
-            browser, shared = None, _get_shared()
-        else:
-            browser, shared = launch(p), None
+    def one(ctx, j, human):
+        ctx.set_default_timeout(15000)
+        ctx.set_default_navigation_timeout(45000)
+        Fj = {**F, "cover_note": tailored_cover(F, j)}
+        return apply_one(ctx, j, Fj, dry, make_asker(Fj, j), human=human,
+                         account=None if dry else make_account(profile, Fj, j),
+                         ask_user=None if dry else make_user_asker(profile, j))
+
+    def stopped() -> bool:
+        return (ROOT / "data" / "STOP").exists()
+
+    with sync_playwright() as p:
+        browser = launch_fn(p, headless=True)
         try:
             for j in jobs:
-                if (ROOT / "data" / "STOP").exists():
+                if stopped():
                     break
-                if headed:
-                    try:
-                        if not shared or not shared.pages:
-                            shared = _get_shared()
-                    except Exception:  # noqa: BLE001
-                        shared = _get_shared()
-                ctx = shared or browser.new_context(viewport={"width": 1280, "height": 900}, accept_downloads=False, locale="en-IN")
-                ctx.set_default_timeout(15000)
-                ctx.set_default_navigation_timeout(45000)
+                ctx = browser.new_context(viewport={"width": 1280, "height": 900}, accept_downloads=False, locale="en-IN")
                 try:
-                    Fj = {**F, "cover_note": tailored_cover(F, j)}
-                    r = apply_one(ctx, j, Fj, dry, make_asker(Fj, j), human=make_human(profile, j) if headed else None,
-                                  account=None if dry else make_account(profile, Fj, j),
-                                  ask_user=None if dry else make_user_asker(profile, j))
+                    r = one(ctx, j, None)
                 finally:
-                    if shared is None:
+                    try:
+                        ctx.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                results.append(r)
+                if can_help and r.get("status") in NEEDS_WINDOW:
+                    retry.append(len(results) - 1)
+                else:
+                    emit("RESULT " + json.dumps(r))
+                time.sleep(random.uniform(*pause))
+        finally:
+            browser.close()
+
+        shared = None
+        try:
+            for i in retry:
+                if not stopped():
+                    j = jobs[i]
+                    try:
+                        if shared is None or not shared.pages:
+                            shared = visible_fn(p)
+                        results[i] = one(shared, j, make_human(profile, j))
+                    except Exception as e:  # noqa: BLE001 - the first-pass result stands
+                        emit(f"visible retry failed for {j.get('id')}: {type(e).__name__}")
+                    finally:
                         try:
-                            ctx.close()
-                        except Exception:  # noqa: BLE001
-                            pass
-                    else:
-                        try:
-                            while len(shared.pages) > 1:
+                            while shared is not None and len(shared.pages) > 1:
                                 shared.pages[-1].close()
                         except Exception:  # noqa: BLE001
                             pass
-                results.append(r)
-                emit("RESULT " + json.dumps(r))
-                time.sleep(random.uniform(*pause))
+                emit("RESULT " + json.dumps(results[i]))
         finally:
-            (shared or browser).close()
+            if shared is not None:
+                shared.close()
     return results
 
 

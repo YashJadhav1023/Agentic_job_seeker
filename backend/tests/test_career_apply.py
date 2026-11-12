@@ -527,3 +527,82 @@ def test_make_user_asker_sends_the_question_and_options_to_the_app(monkeypatch):
     ask_user = ca.make_user_asker({"p": 1}, {"title": "SRE", "company": "Acme", "url": "https://jobs.acme.com/1"})
     assert ask_user("Willing to work night shifts?", ["Yes", "No"]) == "Yes"
     assert seen == [("question", "Acme", "https://jobs.acme.com/1", "Willing to work night shifts? Options: Yes / No", "SRE @ Acme")]
+
+
+def _batch_rig(monkeypatch, tmp_path, human_available=True):
+    """run_batch with fake Playwright, browsers and apply_one: records which browser each job ran in."""
+    import sys
+    import types
+
+    class PW:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *a):
+            return False
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", types.SimpleNamespace(sync_playwright=lambda: PW()))
+    monkeypatch.setattr(ca, "ROOT", tmp_path)
+    rig = {"opened": [], "ran": [], "emitted": []}
+
+    class Ctx:
+        def __init__(self, mode):
+            self.mode, self.pages = mode, [object()]
+
+        def set_default_timeout(self, ms):
+            pass
+
+        def set_default_navigation_timeout(self, ms):
+            pass
+
+        def close(self):
+            pass
+
+    class Browser:
+        def new_context(self, **k):
+            return Ctx("headless")
+
+        def close(self):
+            pass
+
+    def launch_fn(p, headless=True):
+        rig["opened"].append("headless" if headless else "headed")
+        return Browser()
+
+    def visible_fn(p):
+        rig["opened"].append("visible")
+        return Ctx("visible")
+
+    def apply_one(ctx, job, F, dry, ask=None, human=None, account=None, ask_user=None, **k):
+        rig["ran"].append((job["id"], ctx.mode, human is not None))
+        if ctx.mode == "headless" and job["id"] in ("c", "l"):
+            return {"job_id": job["id"], "status": "captcha" if job["id"] == "c" else "login", "reason": "x"}
+        return {"job_id": job["id"], "status": "applied", "reason": "confirmation shown"}
+    monkeypatch.setattr(ca, "apply_one", apply_one)
+    monkeypatch.setattr(ca, "make_human", lambda profile, job: (lambda page, kind, reason: True) if human_available else None)
+    monkeypatch.setattr(ca, "make_account", lambda *a: None)
+    monkeypatch.setattr(ca, "make_user_asker", lambda *a: None)
+    rig["kw"] = dict(emit=rig["emitted"].append, pause=(0, 0), launch_fn=launch_fn, visible_fn=visible_fn)
+    return rig
+
+
+JOBS = [{"id": "f", "url": "https://jobs.a.example/1", "title": "SRE", "company": "A"},
+        {"id": "c", "url": "https://jobs.b.example/2", "title": "SRE", "company": "B"},
+        {"id": "l", "url": "https://jobs.c.example/3", "title": "SRE", "company": "C"}]
+
+
+def test_run_batch_stays_headless_and_opens_a_visible_browser_only_for_captcha_or_login(monkeypatch, tmp_path):
+    rig = _batch_rig(monkeypatch, tmp_path)
+    out = ca.run_batch(PROFILE, JOBS, False, **rig["kw"])
+    assert rig["opened"] == ["headless", "visible"]
+    assert rig["ran"] == [("f", "headless", False), ("c", "headless", False), ("l", "headless", False),
+                          ("c", "visible", True), ("l", "visible", True)]
+    assert [(r["job_id"], r["status"]) for r in out] == [("f", "applied"), ("c", "applied"), ("l", "applied")]
+    assert len(rig["emitted"]) == 3, "one RESULT line per job, the retried one only once"
+
+
+def test_run_batch_dry_or_without_human_help_never_opens_a_visible_browser(monkeypatch, tmp_path):
+    for dry, help_on in ((True, True), (False, False)):
+        rig = _batch_rig(monkeypatch, tmp_path, human_available=help_on)
+        out = ca.run_batch(PROFILE, JOBS, dry, **rig["kw"])
+        assert rig["opened"] == ["headless"]
+        assert [r["status"] for r in out] == ["applied", "captcha", "login"]

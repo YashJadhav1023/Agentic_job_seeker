@@ -41,6 +41,26 @@ class _AttentionBannerState extends ConsumerState<AttentionBanner> {
     } catch (_) {}
   }
 
+  /// Sends an OTP or an answer to the waiting bot. The server accepts it only while the request is open.
+  Future<void> _sendValue(int id, String value) async {
+    final v = value.trim();
+    if (v.isEmpty) return;
+    try {
+      final res = await requireClientFrom(ref).call('attention_resolve', {'id': id, 'value': v});
+      final closed = res.result is Map && res.result['closed'] == true;
+      ref.invalidate(attentionProvider);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(closed ? 'Sent. The bot is continuing.' : 'This request has expired; the bot moved on.'),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    }
+  }
+
   Future<void> _confirmResolved(int id) async {
     try {
       // Mark as done so the bot proceeds immediately without waiting for poll timeout
@@ -201,6 +221,20 @@ class _AttentionBannerState extends ConsumerState<AttentionBanner> {
     );
   }
 
+  static String _title(Map<String, dynamic> r) {
+    final site = '${r['site']}';
+    switch (r['kind']) {
+      case 'login':
+        return 'Account / Login Required: $site';
+      case 'otp':
+        return 'Code needed: $site';
+      case 'question':
+        return 'Question from $site';
+      default:
+        return 'Human Verification: $site';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final items = ref.watch(attentionProvider).value ?? const [];
@@ -244,9 +278,7 @@ class _AttentionBannerState extends ConsumerState<AttentionBanner> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              r['kind'] == 'login'
-                                  ? 'Account / Login Required: ${r['site']}'
-                                  : 'Human Verification: ${r['site']}',
+                              _title(r),
                               style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5, color: AppTheme.textPrimary),
                             ),
                             if ('${r['job'] ?? ''}'.isNotEmpty)
@@ -273,33 +305,118 @@ class _AttentionBannerState extends ConsumerState<AttentionBanner> {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton(
-                        onPressed: () => _skip(r['id'] as int),
-                        child: const Text('Skip', style: TextStyle(color: AppTheme.textMuted)),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        icon: const Icon(Icons.info_outline_rounded, size: 16),
-                        label: const Text('Help & Steps'),
-                        onPressed: () => _showGuidanceModal(r),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton.icon(
-                        icon: const Icon(Icons.open_in_browser_rounded, size: 16),
-                        label: const Text('Sign In / Register'),
-                        onPressed: '${r['open_url'] ?? ''}'.isEmpty
-                            ? null
-                            : () => launchUrl(Uri.parse('${r['open_url']}'), mode: LaunchMode.externalApplication),
-                      ),
-                    ],
-                  ),
+                  if (r['needs_value'] == true)
+                    _AnswerBox(
+                      key: ValueKey('answer-${r['id']}'),
+                      reason: '${r['reason'] ?? ''}',
+                      numeric: r['kind'] == 'otp',
+                      onSend: (v) => _sendValue(r['id'] as int, v),
+                      onSkip: () => _skip(r['id'] as int),
+                    )
+                  else
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () => _skip(r['id'] as int),
+                          child: const Text('Skip', style: TextStyle(color: AppTheme.textMuted)),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton.icon(
+                          icon: const Icon(Icons.info_outline_rounded, size: 16),
+                          label: const Text('Help & Steps'),
+                          onPressed: () => _showGuidanceModal(r),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton.icon(
+                          icon: const Icon(Icons.open_in_browser_rounded, size: 16),
+                          label: const Text('Sign In / Register'),
+                          onPressed: '${r['open_url'] ?? ''}'.isEmpty
+                              ? null
+                              : () => launchUrl(Uri.parse('${r['open_url']}'), mode: LaunchMode.externalApplication),
+                        ),
+                      ],
+                    ),
                 ],
               ),
             ),
           ),
+      ],
+    );
+  }
+}
+
+/// Text box for a request the bot is waiting on (an OTP or a form answer).
+class _AnswerBox extends StatefulWidget {
+  const _AnswerBox({super.key, required this.reason, required this.numeric, required this.onSend, required this.onSkip});
+
+  final String reason;
+  final bool numeric;
+  final Future<void> Function(String value) onSend;
+  final VoidCallback onSkip;
+
+  @override
+  State<_AnswerBox> createState() => _AnswerBoxState();
+}
+
+class _AnswerBoxState extends State<_AnswerBox> {
+  final _c = TextEditingController();
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    final v = _c.text.trim();
+    if (v.isEmpty || _busy) return;
+    setState(() => _busy = true);
+    try {
+      await widget.onSend(v);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (widget.reason.isNotEmpty) ...[
+          Text(widget.reason, style: const TextStyle(fontSize: 12.5, color: AppTheme.textSecondary)),
+          const SizedBox(height: 8),
+        ],
+        TextField(
+          controller: _c,
+          keyboardType: widget.numeric ? TextInputType.number : TextInputType.text,
+          textInputAction: TextInputAction.send,
+          autofillHints: widget.numeric ? const [AutofillHints.oneTimeCode] : null,
+          decoration: InputDecoration(
+            isDense: true,
+            labelText: widget.numeric ? 'Verification code' : 'Your answer',
+            border: const OutlineInputBorder(),
+          ),
+          onSubmitted: (_) => _send(),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            TextButton(
+              onPressed: widget.onSkip,
+              child: const Text('Skip', style: TextStyle(color: AppTheme.textMuted)),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              icon: const Icon(Icons.send_rounded, size: 16),
+              label: const Text('Send'),
+              onPressed: _busy ? null : _send,
+            ),
+          ],
+        ),
       ],
     );
   }

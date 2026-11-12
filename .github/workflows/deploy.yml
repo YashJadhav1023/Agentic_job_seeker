@@ -61,6 +61,7 @@ jobs:
               \"git fetch --depth 1 origin ${SHA}\",
               \"git checkout --force ${SHA}\",
               \"cd deploy && docker builder prune -af\",
+              \"docker compose pull mailflare\",
               \"docker compose build jobhub && docker compose up -d --no-deps jobhub\",
               \"docker builder prune -af && docker image prune -f\",
               \"docker compose up -d --remove-orphans\",

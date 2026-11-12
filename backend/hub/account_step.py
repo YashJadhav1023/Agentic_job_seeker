@@ -165,6 +165,8 @@ def _sign_up(page, F: dict, host: str, log) -> str:
         return "failed"  # an account we do not know the password of, or still rejected: the user signs in
     if b["challenge"]:
         return "captcha"  # not confirmed: after the user's CAPTCHA the sign-up runs again
+    if b["password"] and kind(page) == "signup" and not VERIFY_TEXT_RX.search(b["body"]):
+        return "failed"  # still the sign-up form (a field the site rejected): no account was made
     site_accounts.confirm(host)
     log(f"  🔑 created an account on {host}")
     return "ok"

@@ -6,7 +6,7 @@ import imaplib
 import re
 import time
 from datetime import datetime, timedelta
-from email.utils import parsedate_to_datetime
+from email.utils import parsedate_to_datetime, parseaddr
 from urllib.parse import urlparse
 
 import core
@@ -24,15 +24,21 @@ GENERIC_LABEL_RX = re.compile(r"^(www|careers?|jobs?|apply|boards?|login|my|hr|r
 
 
 def _sender_site(sender: str) -> str:
-    m = re.search(r"@([\w.-]+)", sender or "")
-    return _site(m.group(1)) if m else ""
+    """Registrable domain of the From address (not of its display name, which anyone can set)."""
+    addr = parseaddr(sender or "")[1]
+    return _site(addr.rpartition("@")[2]) if "@" in addr else ""
 
 
 def _names(host: str) -> set:
-    """Company words in the host: acme.wd5.myworkdayjobs.com -> {acme}, careers.acme.co.in -> {acme}."""
+    """Company names in the host, whole labels: acme.wd5.myworkdayjobs.com -> {acme}, careers.acme.co.in -> {acme}."""
     labels = (host or "").lower().split(".")[:-1]
-    return {w for lab in labels for w in re.split(r"[-_]", lab) if len(w) >= 3 and not GENERIC_LABEL_RX.match(w)
-            and w not in SECOND_LEVEL and w not in {s.split(".")[0] for s in ATS_SENDERS}}
+    vendors = {s.split(".")[0] for s in ATS_SENDERS}
+    out = set()
+    for lab in labels:
+        name = "-".join(w for w in lab.split("-") if w and not GENERIC_LABEL_RX.match(w))  # careers-acme -> acme
+        if len(name) >= 3 and name not in SECOND_LEVEL and name not in vendors:
+            out.add(name)
+    return out
 
 
 def _from_site(sender: str, text: str, host: str) -> bool:
@@ -40,7 +46,7 @@ def _from_site(sender: str, text: str, host: str) -> bool:
     site, frm = _site(host), _sender_site(sender)
     if frm and (frm == site or frm in ATS_SENDERS.get(site, ())):
         return True
-    return any(re.search(rf"\b{re.escape(n)}\b", text, re.I) for n in _names(host))
+    return any(re.search(r"\b" + r"[\s-]?".join(map(re.escape, n.split("-"))) + r"\b", text, re.I) for n in _names(host))
 
 
 def _site(host: str) -> str:

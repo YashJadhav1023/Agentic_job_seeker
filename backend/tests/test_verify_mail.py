@@ -24,6 +24,18 @@ def test_code_from_an_unrelated_sender_is_ignored():
     assert got["code"] is None, "no sender and no company name: not provably this site's code"
 
 
+def test_forged_display_name_and_generic_host_words_do_not_count():
+    got = verify_mail.extract("Verify", "Your verification code is 4411", "careers.acme.com",
+                              sender='"no-reply@acme.com" <x@evil.example>')
+    assert got["code"] is None, "the address, not the display name, decides the sender"
+    got = verify_mail.extract("Your Global OTP", "Your OTP is 4412", "global-services.example.com",
+                              sender="alerts@hdfcbank.net")
+    assert got["code"] is None, "a generic word from a hyphenated host is not a company name"
+    got = verify_mail.extract("Acme Corp: verify your account", "Your verification code is 4413",
+                              "acme-corp.wd1.myworkdayjobs.com", sender="noreply@sendgrid.example.org")
+    assert got["code"] == "4413"
+
+
 def test_code_from_the_site_or_naming_the_company_counts():
     assert verify_mail.extract("Verify", "Your verification code is 7781", "careers.acme.com",
                                sender="no-reply@mail.acme.com")["code"] == "7781"

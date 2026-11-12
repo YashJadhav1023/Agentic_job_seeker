@@ -189,7 +189,11 @@ def wait_value(rid: int, poll: float = 5.0, sleep=time.sleep, now=time.time) -> 
         if not r or r["status"] in ("skipped", "expired"):
             return None
         if r["status"] == "done":
-            return r.get("value") or None
+            v = r.get("value") or None
+            if v:  # the bot has it now: do not keep OTPs / answers in the database
+                with _db() as c:
+                    c.execute("UPDATE attention SET value=NULL WHERE id=?", (rid,))
+            return v
         if now() >= r["expires"]:
             resolve(rid, "expired")
             return None

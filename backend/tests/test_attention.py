@@ -136,6 +136,7 @@ def test_answer_is_returned_to_the_waiting_bot(sent):
     assert attention.answer(rid, " 482913 ")
     assert attention.wait_value(rid, sleep=lambda s: None) == "482913"
     assert attention.get(rid)["status"] == "done"
+    assert not attention.get(rid)["value"], "the code is not kept in the database once the bot has it"
 
 
 def test_answer_after_expiry_is_refused(sent):

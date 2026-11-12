@@ -301,6 +301,26 @@ def test_only_company_pages_are_selected(prof):
     assert a in {j["id"] for j in jobs}
 
 
+@pytest.mark.parametrize("source,board_url,company", [
+    ("jobspy-naukri", "https://www.naukri.com/job-listings-sre-acme-1", "Acme"),
+    ("jobspy-linkedin", "https://www.linkedin.com/jobs/view/42", "Beta"),
+    ("post", "https://www.linkedin.com/posts/hr-at-gamma_hiring-sre", "Gamma"),
+])
+def test_company_page_reached_from_a_board_or_post_is_eligible(prof, source, board_url, company):
+    jid = add_job(board_url, company=company, source=source)
+    page = f"https://{company.lower()}.wd5.myworkdayjobs.com/en-US/careers/job/SRE_{jid}"
+    with core.db() as c:
+        c.execute("UPDATE jobs SET apply_url=? WHERE id=?", (page, jid))
+    jobs, why = ca.eligible(prof, dry=True)
+    assert [(j["id"], j["url"], j["board_url"]) for j in jobs] == [(jid, page, board_url)] and not why
+
+
+def test_board_only_job_is_not_eligible_so_no_account_is_made_on_the_board(prof):
+    jid = add_job("https://www.naukri.com/job-listings-sre-acme-2", source="jobspy-naukri")
+    with core.db() as c:
+        c.execute("UPDATE jobs SET apply_url=? WHERE id=?", ("https://www.naukri.com/apply/2", jid))
+    assert ca.eligible(prof, dry=True) == ([], "no eligible company-page jobs")
+
 def test_one_job_per_company_per_run_and_best_score_first(prof):
     add_job("https://acme.com/a", score=50)
     best = add_job("https://acme.com/b", score=90)

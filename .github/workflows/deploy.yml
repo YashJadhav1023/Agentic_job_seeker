@@ -4,6 +4,8 @@ name: Deploy
 # through SSM Run Command (no SSH port, no inbound access). Uses repository secrets
 # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY. The instance is found by its Project tag (created by Terraform), so
 # there is nothing else to configure. Skips cleanly when the secrets or the instance do not exist yet.
+# The 30 GB root disk stores every image twice (containerd snapshotter): jobhub is built and started first, and the
+# build cache is cleared before and after it, so building the other services cannot run the disk full.
 
 on:
   workflow_run:
@@ -58,7 +60,10 @@ jobs:
               \"OLDC=\$(sha256sum deploy/Caddyfile | cut -d' ' -f1)\",
               \"git fetch --depth 1 origin ${SHA}\",
               \"git checkout --force ${SHA}\",
-              \"cd deploy && docker compose up -d --build --remove-orphans\",
+              \"cd deploy && docker builder prune -af\",
+              \"docker compose build jobhub && docker compose up -d --no-deps jobhub\",
+              \"docker builder prune -af\",
+              \"docker compose up -d --build --remove-orphans\",
               \"[ \$OLDC = \$(sha256sum Caddyfile | cut -d' ' -f1) ] || docker compose up -d --force-recreate --no-deps caddy\",
               \"docker image prune -f\",
               \"for i in \$(seq 1 30); do docker compose exec -T jobhub curl -fsS http://127.0.0.1:8000/health && exit 0; sleep 5; done; docker compose logs --tail 80 jobhub; exit 1\"

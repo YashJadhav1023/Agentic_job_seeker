@@ -195,3 +195,12 @@ def test_remote_browser_reconnects_after_the_phone_backgrounds_it():
     query, _, fragment = url.partition("#")
     assert "reconnect=1" in query and "reconnect_delay=2000" in query
     assert fragment == "password=pw" and "pw" not in query
+
+
+def test_pause_platform_calls_block_platform(monkeypatch):
+    import autopilot
+    blocked = []
+    monkeypatch.setattr(autopilot, "block_platform", lambda name, hours, reason: blocked.append((name, hours, reason)))
+    ok = attention.pause_platform("Naukri", "captcha", hours=12.0)
+    assert ok is True
+    assert blocked == [("naukri", 12.0, "captcha")]

@@ -68,14 +68,43 @@ def test_wait_for_human_off_when_headless(monkeypatch):
 
 def test_wait_for_human_gives_up_when_skipped(monkeypatch):
     import attention
+    import pytest
+    monkeypatch.setenv("JOBHUB_DRY_RUN", "0")
     g = _guard(monkeypatch)
+    monkeypatch.setattr(g, "DRY_RUN", False)
     monkeypatch.setattr(attention, "available", lambda profile=None: True)
     monkeypatch.setattr(attention, "request", lambda *a, **k: 3)
     monkeypatch.setattr(attention, "get", lambda rid: {"status": "skipped", "expires": 9e12})
+    paused = []
+    monkeypatch.setattr(attention, "pause_platform", lambda site, reason: paused.append((site, reason)) or True)
 
     async def clear():
         return False
-    assert asyncio.run(g.wait_for_human(_Page(), "Naukri", "login", "x", clear, poll=0)) is False
+    with pytest.raises(SystemExit) as exc:
+        asyncio.run(g.wait_for_human(_Page(), "Naukri", "login", "x", clear, poll=0))
+    assert exc.value.code == 3
+    assert paused == [("naukri", "Naukri login not answered")]
+
+
+def test_apply_jobs_respects_cooldown_unless_ignored(monkeypatch):
+    import core
+    import server
+    import autopilot
+    p = core.load_profile()
+    p["safety"] = {"dry_run_default": True, "confirmed_by_user": False}
+    monkeypatch.setattr(core, "load_profile", lambda: p)
+    monkeypatch.setattr(server, "_has_session", lambda pl: True)
+    monkeypatch.setattr(autopilot, "platform_blocked", lambda pl: "rate limited" if pl == "naukri" else "")
+
+    # Blocked without ignore_cooldown
+    r = server.apply_jobs({"platform": "naukri"})
+    assert "error" in r and "cooldown" in r["error"]
+
+    # Overridden with ignore_cooldown=True
+    monkeypatch.setattr(server, "_write_job_automation_config", lambda p, limit: None)
+    monkeypatch.setattr(core, "spawn", lambda *a, **k: {"run_id": "r_ok"})
+    r_ok = server.apply_jobs({"platform": "naukri", "ignore_cooldown": True})
+    assert r_ok.get("run_id") == "r_ok"
 
 
 def test_apply_jobs_naukri_runs_headed_and_points_at_hub(monkeypatch, tmp_path):

@@ -215,4 +215,5 @@ def test_attention_history_counts_by_status_kind_and_site(sent):
     assert out["by_kind"] == {"question": 1, "human_check": 1, "login": 1, "otp": 1}
     assert out["by_site"] == {"Naukri": 2, "Workday": 2}
     assert server.attention_history({})["hours"] == 24  # default window
+    assert server.attention_history({"hours": 99999})["hours"] == 24 * 90  # the window actually used
     assert d  # still open

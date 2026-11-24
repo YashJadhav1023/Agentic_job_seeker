@@ -674,8 +674,7 @@ def attention_list(_):
 
 def attention_history(a):
     import attention
-    hours = float((a or {}).get("hours") or 24)
-    return {"hours": int(hours), **attention.history(hours)}
+    return attention.history(int((a or {}).get("hours") or 24))
 
 
 def form_questions(a):

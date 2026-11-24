@@ -285,6 +285,9 @@ TOOLS = {
     "attention_list": ("Open 'the bot needs you' requests: a site wants a login, a human check, a code (otp) or an answer "
                        "(question) during a run. Login / human-check rows have a link (open_url) to the remote browser where the "
                        "bot waits; rows with needs_value=true want you to send the code or answer with attention_resolve.", _s("")),
+    "attention_history": ("Counts of 'the bot needs you' requests from the last N hours (default 24), by status "
+                          "(open, done, skipped, expired), kind and site. Read-only; shows how many went unanswered.",
+                          _s("", hours={"type": "integer", "minimum": 1, "maximum": 2160})),
     "form_questions": ("Application-form questions the bot could not answer from your profile (it skipped those forms). "
                        "Answer each once with form_answer and every later form that asks it is filled with your answer. all=true "
                        "also lists answered ones.", _s("", all={"type": "boolean"})),
@@ -312,7 +315,7 @@ ANNOT = {"hub_status": READ, "list_hr_contacts": READ, "run_status": READ, "trac
          "whatsapp_status": READ_NET, "whatsapp_link": dict(WRITE, openWorldHint=True), "whatsapp_unlink": dict(WRITE, destructiveHint=True),
          "whatsapp_settings": dict(WRITE, idempotentHint=True), "whatsapp_import_numbers": WRITE, "whatsapp_contacts": READ, "whatsapp_send": ACT,
          "alarm_list": READ, "alarm_set": dict(WRITE, idempotentHint=True), "alarm_delete": dict(WRITE, destructiveHint=True),
-         "alarm_run_now": ACT, "attention_list": READ, "form_questions": READ, "form_answer": dict(WRITE, idempotentHint=True), "attention_resolve": dict(WRITE, idempotentHint=True)}
+         "alarm_run_now": ACT, "attention_list": READ, "attention_history": READ, "form_questions": READ, "form_answer": dict(WRITE, idempotentHint=True), "attention_resolve": dict(WRITE, idempotentHint=True)}
 
 REQUIRED = {"apply_jobs": ["platform"], "attention_resolve": ["id"], "form_answer": ["id", "answer"], "run_status": ["run_id"], "send_email": ["to", "subject", "body"],
             "find_hr_emails": ["city"], "login_platform": ["platform"], "add_hr_contact": ["email", "source_url"], "job_detail": ["id"], "tailor_application": ["job_url_or_id"],
@@ -667,6 +670,12 @@ def attention_list(_):
         r["open_url"] = "" if r["needs_value"] else attention.open_link(r["id"])
         r["minutes_left"] = max(0, int((r.pop("expires") - time.time()) // 60))
     return {"requests": items, "available": attention.available()}
+
+
+def attention_history(a):
+    import attention
+    hours = float((a or {}).get("hours") or 24)
+    return {"hours": int(hours), **attention.history(hours)}
 
 
 def form_questions(a):

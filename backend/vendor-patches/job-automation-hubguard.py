@@ -18,6 +18,15 @@ def title_ok(title: str) -> bool:
 
 import asyncio, pathlib
 
+try:
+    from playwright.async_api import TimeoutError as PlaywrightTimeout
+except ImportError:  # helpers are also imported where playwright is absent
+    class PlaywrightTimeout(Exception):
+        pass
+
+FIRST_LOAD_MS = 45000  # a cold Naukri homepage on the small server can take longer than the 10 s default
+
+
 def PROFILE_DIR(platform: str) -> str:
     base = pathlib.Path(os.getenv("JOBHUB_PROFILES", str(pathlib.Path.home() / "Personal/job-hub/.profiles")))
     p = base / platform
@@ -97,7 +106,11 @@ async def fill_all(target, rules, cover=None,
 async def wait_for_login(page, url, is_logged_in, timeout=600):
     """Open url; if not logged in, ask the USER to log in in the visible window (phone notification with a link to the
     remote browser when the hub's human help is on) and wait. Headless runs cannot be logged into: they stop at once."""
-    await page.goto(url, wait_until="domcontentloaded")
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=FIRST_LOAD_MS)
+    except PlaywrightTimeout:
+        print("  ⚠ first page load timed out, retrying once", flush=True)
+        await page.goto(url, wait_until="domcontentloaded", timeout=FIRST_LOAD_MS)
     await page.wait_for_timeout(3000)
     if not is_logged_in(page.url):
         if HEADLESS:

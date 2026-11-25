@@ -51,8 +51,9 @@
 }
 
 # Dedicated subdomain for Mailflare (automatic HTTPS Let's Encrypt, pure AWS). MAILFLARE_HOST is the mail domain's
-# A record (mail.yashjadhavcicd.cc.cd); compose gives it a default, so it is never empty.
-mail.{$JOBHUB_DOMAIN}, {$MAILFLARE_HOST} {
+# A record (mail.yashjadhavcicd.cc.cd); compose gives it a default, so it is never empty. One address only, so it can
+# never repeat another site's address.
+{$MAILFLARE_HOST} {
 	encode zstd gzip
 
 	header {

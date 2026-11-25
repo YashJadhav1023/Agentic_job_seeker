@@ -108,13 +108,31 @@ def test_wait_for_login_asks_user_when_session_expired(monkeypatch):
     class P:
         url = "https://www.naukri.com/nlogin/login"
 
-        async def goto(self, u, wait_until=None):
+        async def goto(self, u, wait_until=None, timeout=None):
             pass
 
         async def wait_for_timeout(self, ms):
             pass
     asyncio.run(g.wait_for_login(P(), "https://www.naukri.com/mnjuser/homepage", lambda u: "mnjuser" in u))
     assert calls == [("Naukri", "login")]
+
+
+def test_wait_for_login_gives_first_load_45s_and_retries_once(monkeypatch):
+    g = _guard(monkeypatch)
+    seen = []
+
+    class P:
+        url = "https://www.naukri.com/mnjuser/homepage"
+
+        async def goto(self, u, wait_until=None, timeout=None):
+            seen.append(timeout)
+            if len(seen) == 1:
+                raise g.PlaywrightTimeout("Page.goto: Timeout exceeded")
+
+        async def wait_for_timeout(self, ms):
+            pass
+    asyncio.run(g.wait_for_login(P(), "https://www.naukri.com/mnjuser/homepage", lambda u: "mnjuser" in u))
+    assert seen == [45000, 45000]
 
 
 def test_wait_for_human_stops_when_done_but_never_clear(monkeypatch):

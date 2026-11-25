@@ -84,6 +84,8 @@ services:
     depends_on: [jobhub]
     env_file: .env
     ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      MAILFLARE_HOST: "${MAILFLARE_HOST:-mail.yashjadhavcicd.cc.cd}"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
@@ -110,11 +112,14 @@ services:
     env_file: .env
     environment:
       NODE_ENV: "production"
-      APP_URL: "https://${JOBHUB_DOMAIN}/mail"
+      MAILFLARE_HOST: "${MAILFLARE_HOST:-mail.yashjadhavcicd.cc.cd}"
+      APP_URL: "https://${MAILFLARE_HOST:-mail.yashjadhavcicd.cc.cd}"
       DATA_DIR: "/data"
       DATABASE_URL: "file:/data/mailflare.db"
-      SMTP_INBOUND_PORT: "0"
-      MAIL_HOSTNAME: "${JOBHUB_DOMAIN}"
+      # Inbound mail: MX yashjadhavcicd.cc.cd -> mail.yashjadhavcicd.cc.cd -> this host. Needs the security group's
+      # port 25 (Terraform enable_inbound_smtp). EC2 blocks OUTBOUND 25, so sending stays on SMTP_URL.
+      SMTP_INBOUND_PORT: "25"
+      MAIL_HOSTNAME: "${MAILFLARE_HOST:-mail.yashjadhavcicd.cc.cd}"
       SMTP_URL: "smtps://yash.j.devops%40gmail.com:${JOBHUB_SECRET_GMAIL_APP_PASSWORD:-}@smtp.gmail.com:465"
       AI_BASE_URL: "${MAILFLARE_AI_BASE_URL:-http://ollama:11434/v1}"
       AI_API_KEY: "${MAILFLARE_AI_API_KEY:-ollama}"
@@ -122,6 +127,7 @@ services:
     volumes:
       - mailflare-data:/data
     expose: ["3000"]
+    ports: ["25:25"]
     deploy:
       resources:
         limits: {memory: 512m}

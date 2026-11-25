@@ -373,7 +373,7 @@ def apply_platform(profile: dict, c: dict, platform: str, dry: bool) -> dict:
         time.sleep(10)
     text = "\n".join(st.get("log_tail", []))
     hit = restriction_in(text) or ("" if st.get("exit_code") in (0, None) else f"exit code {st.get('exit_code')}")
-    if hit and not dry:
+    if hit and not dry and not platform_blocked(platform):
         block_platform(platform, c["platform_cooldown_hours"], hit)
     return {"platform": platform, "state": st.get("state"), "restriction": hit, "run_id": r["run_id"]}
 

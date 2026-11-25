@@ -182,7 +182,9 @@ async def wait_for_human(page, site: str, kind: str, reason: str, is_clear, job:
         r = att.get(rid)
         if not r or r["status"] in ("skipped", "expired"):
             print(f"  ⌛ no help in time for request #{rid}, moving on", flush=True)
-            return False
+            if hasattr(att, "pause_platform") and not DRY_RUN and att.pause_platform(site.lower(), f"{site} {kind} not answered"):
+                print(f"  🛑 {site} paused on cooldown; stopping run (unanswered check #{rid})", flush=True)
+            raise SystemExit(3)
         try:
             if await is_clear():
                 att.resolve(rid, "done")
@@ -195,7 +197,9 @@ async def wait_for_human(page, site: str, kind: str, reason: str, is_clear, job:
             return True
         if time.time() >= r["expires"]:
             att.resolve(rid, "expired")
-            continue
+            if hasattr(att, "pause_platform") and not DRY_RUN and att.pause_platform(site.lower(), f"{site} {kind} not answered"):
+                print(f"  🛑 {site} paused on cooldown; stopping run (unanswered check #{rid})", flush=True)
+            raise SystemExit(3)
         await asyncio.sleep(poll)
 
 

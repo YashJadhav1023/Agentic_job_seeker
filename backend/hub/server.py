@@ -42,7 +42,9 @@ TOOLS = {
                       limit={"type": "integer", "minimum": 1, "maximum": 30},
                       dry_run={"type": "boolean", "default": True},
                       headless={"type": "boolean", "default": True,
-                                "description": "Run hidden in the background (default). false = show the browser."})),
+                                "description": "Run hidden in the background (default). false = show the browser."},
+                      ignore_cooldown={"type": "boolean", "default": False,
+                                       "description": "Run even if the platform is currently on cooldown."})),
     "search_jobs": ("Discover jobs via LinkedIn's PUBLIC job pages (no login) using the ai-job-search CLI; results are filtered "
                     "by profile title include/exclude (drops Senior/Lead etc.). Searching is read-only. save=true stores and scores the "
                     "matches in the hub; auto_apply=true also applies to the good ones (company form, else a tailored email), "
@@ -456,6 +458,11 @@ def _write_job_automation_config(p, limit):
 def apply_jobs(a):
     p = core.load_profile()
     platform = a["platform"]
+    import autopilot
+    blocked = autopilot.platform_blocked(platform)
+    if blocked and not a.get("ignore_cooldown"):
+        return {"error": f"{platform} is on cooldown: {blocked}",
+                "hint": "pass ignore_cooldown=true to override"}
     dry = a.get("dry_run", p["safety"]["dry_run_default"])
     if not _has_session(platform):
         return {"error": f"no saved {platform} login session - call login_platform('{platform}') and log in first"}

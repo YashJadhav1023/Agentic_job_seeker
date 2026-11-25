@@ -6,6 +6,7 @@ name: Deploy
 # there is nothing else to configure. Skips cleanly when the secrets or the instance do not exist yet.
 # The 30 GB root disk stores every image twice (containerd snapshotter): only jobhub is built here, with the build
 # cache cleared before and after it; mailflare is built by CI and pulled (pre-built images need no build cache).
+# After the new containers are up, every image no container uses (old jobhub/mailflare builds) is removed.
 
 on:
   workflow_run:
@@ -66,7 +67,8 @@ jobs:
               \"docker builder prune -af && docker image prune -f\",
               \"docker compose up -d --remove-orphans\",
               \"[ \$OLDC = \$(sha256sum Caddyfile | cut -d' ' -f1) ] || docker compose up -d --force-recreate --no-deps caddy\",
-              \"docker image prune -f\",
+              \"docker image prune -af\",
+              \"docker system df\",
               \"for i in \$(seq 1 30); do docker compose exec -T jobhub curl -fsS http://127.0.0.1:8000/health && exit 0; sleep 5; done; docker compose logs --tail 80 jobhub; exit 1\"
             ]" --query Command.CommandId --output text)
           echo "id=$CMD_ID" >> "$GITHUB_OUTPUT"

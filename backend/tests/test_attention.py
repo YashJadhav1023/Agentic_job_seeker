@@ -204,3 +204,25 @@ def test_pause_platform_calls_block_platform(monkeypatch):
     ok = attention.pause_platform("Naukri", "captcha", hours=12.0)
     assert ok is True
     assert blocked == [("naukri", 12.0, "captcha")]
+
+
+def test_attention_history_counts_by_status_kind_and_site(sent):
+    import server
+    a = attention.request("question", "Naukri", "u", "r", "j1", P)
+    b = attention.request("human_check", "Naukri", "u", "r", "j2", P)
+    c = attention.request("login", "Workday", "u", "r", "j3", P)
+    d = attention.request("otp", "Workday", "u", "r", "j4", P)
+    old = attention.request("login", "Workday", "u", "r", "j5", P)
+    assert attention.answer(a, "yes")
+    assert attention.resolve(b, "skipped")
+    with attention._db() as cx:  # c is past its deadline but nothing swept it yet; old is outside the window
+        cx.execute("UPDATE attention SET expires=? WHERE id=?", (time.time() - 5, c))
+        cx.execute("UPDATE attention SET created=? WHERE id=?", (time.time() - 48 * 3600, old))
+    out = server.attention_history({"hours": 24})
+    assert out["hours"] == 24 and out["total"] == 4
+    assert out["by_status"] == {"done": 1, "skipped": 1, "expired": 1, "open": 1}
+    assert out["by_kind"] == {"question": 1, "human_check": 1, "login": 1, "otp": 1}
+    assert out["by_site"] == {"Naukri": 2, "Workday": 2}
+    assert server.attention_history({})["hours"] == 24  # default window
+    assert server.attention_history({"hours": 99999})["hours"] == 24 * 90  # the window actually used
+    assert d  # still open

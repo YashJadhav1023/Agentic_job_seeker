@@ -90,6 +90,22 @@ def pending() -> list:
         return [dict(r) for r in c.execute("SELECT * FROM attention WHERE status='open' ORDER BY id DESC")]
 
 
+def history(hours: float = 24) -> dict:
+    """Counts of requests created in the last `hours`, by status, kind and site. Read-only: an open request past its
+    deadline counts as expired even when nothing has swept it yet."""
+    now = time.time()
+    hours = max(1, min(int(hours), 24 * 90))
+    since = now - hours * 3600
+    with _db() as c:
+        rows = c.execute("SELECT CASE WHEN status='open' AND expires<? THEN 'expired' ELSE status END, kind, site "
+                         "FROM attention WHERE created>=?", (now, since)).fetchall()
+    out: dict = {"hours": hours, "total": len(rows), "by_status": {}, "by_kind": {}, "by_site": {}}
+    for st, kind, site in rows:
+        for key, val in (("by_status", st), ("by_kind", kind), ("by_site", site)):
+            out[key][val or "?"] = out[key].get(val or "?", 0) + 1
+    return out
+
+
 def resolve(rid: int, status: str = "done") -> bool:
     if status not in ("done", "skipped", "expired"):
         raise ValueError("status must be done, skipped or expired")

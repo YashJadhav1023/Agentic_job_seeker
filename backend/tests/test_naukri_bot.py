@@ -86,6 +86,24 @@ def test_wait_for_human_gives_up_when_skipped(monkeypatch):
     assert paused == [("naukri", "Naukri login not answered")]
 
 
+def test_dry_run_unanswered_check_stops_without_claiming_a_pause(monkeypatch, capsys):
+    import attention
+    import pytest
+    g = _guard(monkeypatch)
+    monkeypatch.setattr(g, "DRY_RUN", True)
+    monkeypatch.setattr(attention, "available", lambda profile=None: True)
+    monkeypatch.setattr(attention, "request", lambda *a, **k: 3)
+    monkeypatch.setattr(attention, "get", lambda rid: {"status": "skipped", "expires": 9e12})
+    paused = []
+    monkeypatch.setattr(attention, "pause_platform", lambda site, reason: paused.append(site) or True)
+
+    async def clear():
+        return False
+    with pytest.raises(SystemExit):
+        asyncio.run(g.wait_for_human(_Page(), "Naukri", "login", "x", clear, poll=0))
+    assert paused == [] and "paused on cooldown" not in capsys.readouterr().out
+
+
 def test_apply_jobs_respects_cooldown_unless_ignored(monkeypatch):
     import core
     import server

@@ -229,5 +229,5 @@ def pause_platform(site: str, reason: str, hours: float | None = None, profile: 
         h = hours if hours is not None else ((p.get("autopilot") or {}).get("platform_cooldown_hours") or 24.0)
         autopilot.block_platform(site.lower(), float(h), reason)
         return True
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - a failed pause must not crash the bot; the caller logs only a True result
         return False

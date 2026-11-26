@@ -107,7 +107,8 @@ services:
     profiles: ["mailflare"]
     # Built by CI (.github/workflows/ci.yml, job mailflare) from upstream hieunc229/mailflare at this commit; the
     # server only pulls it. Bump the commit here to update.
-    image: ghcr.io/yashjadhav1023/mailflare:be1343b7cf938030450ba05a92c90227ffa51aba
+    # 94b2210: "I've set it up" activates a Skip-DNS domain (upstream #335); before it, mail to such a domain was dropped.
+    image: ghcr.io/yashjadhav1023/mailflare:94b2210cff9da8ea15f265cf7871ec0ffa0803c6
     restart: unless-stopped
     env_file: .env
     environment:
